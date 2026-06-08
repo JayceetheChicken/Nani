@@ -95,6 +95,40 @@ class LocalGemmaProvider : AiProvider {
                 riskLevel = AiRiskLevel.Low,
                 operations = listOf(JSONObject().put("op", "summarize_folder"))
             )
+            "bildschirm" in normalized || "screen" in normalized || "webseite" in normalized -> plan(
+                actionType = AiAction.ReadScreen,
+                explanation = "Nani can read the current visible screen through Accessibility.",
+                requiresConfirmation = false,
+                requiresInternetConfirmation = false,
+                riskLevel = AiRiskLevel.Low,
+                operations = listOf(JSONObject().put("op", "read_screen"))
+            )
+            "chrome" in normalized || "browser" in normalized || "url" in normalized -> plan(
+                actionType = AiAction.UseBrowser,
+                explanation = "Nani can open a URL only after internet confirmation.",
+                requiresConfirmation = true,
+                requiresInternetConfirmation = true,
+                riskLevel = AiRiskLevel.Medium,
+                operations = listOf(
+                    JSONObject()
+                        .put("op", "open_url")
+                        .put("url", "https://www.google.com")
+                        .put("reason", "User requested browser work")
+                )
+            )
+            "formular" in normalized -> plan(
+                actionType = AiAction.FillForm,
+                explanation = "Nani can prepare visible form fields but will not submit without extra confirmation.",
+                requiresConfirmation = true,
+                requiresInternetConfirmation = false,
+                riskLevel = AiRiskLevel.Medium,
+                operations = listOf(
+                    JSONObject()
+                        .put("op", "set_field_by_label")
+                        .put("label", "Name")
+                        .put("text", "Nils")
+                )
+            )
             else -> plan(
                 actionType = AiAction.AskClarifyingQuestion,
                 explanation = "Nani needs a clearer command before proposing a safe JSON plan.",

@@ -6,7 +6,11 @@ object AppPolicy {
         "permissioncontroller",
         "packageinstaller",
         "installer",
-        "playstore"
+        "playstore",
+        "vending",
+        "knox",
+        "security",
+        "account"
     )
 
     private val sensitiveFragments = listOf(
@@ -16,7 +20,9 @@ object AppPolicy {
         "password",
         "authenticator",
         "2fa",
-        "paypal"
+        "paypal",
+        "tan",
+        "banking"
     )
 
     private val browserFragments = listOf(
@@ -37,6 +43,19 @@ object AppPolicy {
         "outlook"
     )
 
+    private val confirmationFragments = listOf(
+        "drive",
+        "dropbox",
+        "onedrive",
+        "cloud",
+        "instagram",
+        "facebook",
+        "tiktok",
+        "shop",
+        "booking",
+        "travel"
+    )
+
     fun decisionForPackage(packageName: String): AppPolicyDecision {
         val normalized = packageName.lowercase()
         return when {
@@ -44,6 +63,7 @@ object AppPolicy {
             sensitiveFragments.any { normalized.contains(it) } -> AppPolicyDecision.Blocked
             browserFragments.any { normalized.contains(it) } -> AppPolicyDecision.RequiresInternetConfirmation
             sendFragments.any { normalized.contains(it) } -> AppPolicyDecision.RequiresSendConfirmation
+            confirmationFragments.any { normalized.contains(it) } -> AppPolicyDecision.RequiresConfirmation
             else -> AppPolicyDecision.Allowed
         }
     }
@@ -51,6 +71,7 @@ object AppPolicy {
 
 enum class AppPolicyDecision {
     Allowed,
+    RequiresConfirmation,
     RequiresInternetConfirmation,
     RequiresSendConfirmation,
     Blocked

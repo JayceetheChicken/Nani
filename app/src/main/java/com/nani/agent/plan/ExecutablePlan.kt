@@ -22,7 +22,13 @@ data class PlanOperation(
     val content: String? = null,
     val query: String? = null,
     val url: String? = null,
-    val reason: String? = null
+    val reason: String? = null,
+    val text: String? = null,
+    val label: String? = null,
+    val targetTextOrHint: String? = null,
+    val targetViewIdResourceName: String? = null,
+    val targetNodeId: Int? = null,
+    val requiresFinalSubmitConfirmation: Boolean = false
 )
 
 enum class PlanOperationType(val wireName: String, val writes: Boolean, val usesInternet: Boolean = false) {
@@ -40,6 +46,23 @@ enum class PlanOperationType(val wireName: String, val writes: Boolean, val uses
     SummarizeFolder("summarize_folder", writes = false),
     OpenUrl("open_url", writes = false, usesInternet = true),
     UseApp("use_app", writes = false),
+    ReadScreen("read_screen", writes = false),
+    TapNode("tap_node", writes = false),
+    SetText("set_text", writes = true),
+    AppendText("append_text", writes = true),
+    Scroll("scroll", writes = false),
+    PressBack("press_back", writes = false),
+    PressHome("press_home", writes = false),
+    OpenApp("open_app", writes = false),
+    WaitForScreen("wait_for_screen", writes = false),
+    FindNode("find_node", writes = false),
+    SelectOption("select_option", writes = true),
+    FillForm("fill_form", writes = true, usesInternet = true),
+    SetFieldByLabel("set_field_by_label", writes = true),
+    SetFieldByHint("set_field_by_hint", writes = true),
+    SetFieldByNodeId("set_field_by_node_id", writes = true),
+    ClickButtonByText("click_button_by_text", writes = false, usesInternet = true),
+    SubmitForm("submit_form", writes = true, usesInternet = true),
     Unsupported("unsupported", writes = false);
 
     companion object {

@@ -28,10 +28,43 @@ object PlanValidator {
         "overlay_action",
         "accessibility_click",
         "accessibility_gesture",
-        "click",
-        "gesture",
         "permission",
         "settings"
+    )
+    private val uiOperations = setOf(
+        PlanOperationType.ReadScreen,
+        PlanOperationType.TapNode,
+        PlanOperationType.SetText,
+        PlanOperationType.AppendText,
+        PlanOperationType.Scroll,
+        PlanOperationType.PressBack,
+        PlanOperationType.PressHome,
+        PlanOperationType.OpenApp,
+        PlanOperationType.WaitForScreen,
+        PlanOperationType.FindNode,
+        PlanOperationType.SelectOption,
+        PlanOperationType.FillForm,
+        PlanOperationType.SetFieldByLabel,
+        PlanOperationType.SetFieldByHint,
+        PlanOperationType.SetFieldByNodeId,
+        PlanOperationType.ClickButtonByText,
+        PlanOperationType.SubmitForm,
+        PlanOperationType.OpenUrl,
+        PlanOperationType.UseApp
+    )
+    private val fileOperations = setOf(
+        PlanOperationType.ListFiles,
+        PlanOperationType.ReadFile,
+        PlanOperationType.SummarizeFile,
+        PlanOperationType.SearchFiles,
+        PlanOperationType.ClassifyFiles,
+        PlanOperationType.CreateFolder,
+        PlanOperationType.CreateFile,
+        PlanOperationType.EditTextFile,
+        PlanOperationType.AppendTextFile,
+        PlanOperationType.CopyFile,
+        PlanOperationType.RenameFile,
+        PlanOperationType.SummarizeFolder
     )
 
     fun validate(
@@ -47,11 +80,12 @@ object PlanValidator {
             AiAction.WriteFiles,
             AiAction.EditFiles,
             AiAction.OrganizeFiles,
+            AiAction.ReadScreen,
             AiAction.UseApp,
-            AiAction.UseBrowser -> Unit
-            AiAction.AskConfirmation -> {
-                errors += "Confirmation-request plans cannot be executed directly."
-            }
+            AiAction.UseBrowser,
+            AiAction.FillForm,
+            AiAction.WorkOnWebpage,
+            AiAction.AskConfirmation -> Unit
             AiAction.AskClarifyingQuestion -> {
                 errors += "Clarifying-question plans cannot be executed."
             }
@@ -72,7 +106,10 @@ object PlanValidator {
         val hasWritingOperations = plan.operations.any { it.op.writes }
         val hasInternetOperations = plan.requiresInternetConfirmation ||
             plan.operations.any { it.op.usesInternet || NetworkPolicy.operationRequiresInternetConfirmation(it.rawOp) }
-        val requiresWorkFolder = plan.operations.any { it.op != PlanOperationType.OpenUrl && it.op != PlanOperationType.UseApp }
+        val requiresWorkFolder = plan.operations.any { it.op in fileOperations }
+        val requiresFinalSubmitConfirmation = plan.operations.any {
+            it.requiresFinalSubmitConfirmation || it.op == PlanOperationType.SubmitForm || isFinalSubmitText(it.text)
+        }
 
         if (hasWritingOperations && !plan.requiresConfirmation) {
             errors += "Writing operations require explicit confirmation."
@@ -85,6 +122,9 @@ object PlanValidator {
         }
         if (requiresWorkFolder && !hasWorkFolder) {
             errors += "Select a work folder before executing this plan."
+        }
+        if (requiresFinalSubmitConfirmation && plan.actionType != AiAction.AskConfirmation) {
+            errors += "Final submit/send actions must be returned as ask_confirmation plans."
         }
 
         plan.operations.forEachIndexed { index, operation ->
@@ -104,7 +144,8 @@ object PlanValidator {
             warnings = warnings,
             requiresWorkFolder = requiresWorkFolder,
             hasWritingOperations = hasWritingOperations,
-            requiresInternetConfirmation = hasInternetOperations
+            requiresInternetConfirmation = hasInternetOperations,
+            requiresFinalSubmitConfirmation = requiresFinalSubmitConfirmation
         )
     }
 
@@ -153,8 +194,30 @@ object PlanValidator {
                     errors += "operation ${index + 1} URL is missing."
                 }
             }
-            PlanOperationType.UseApp -> {
-                errors += "UI app actions are not executable in this build."
+            PlanOperationType.UseApp,
+            PlanOperationType.ReadScreen,
+            PlanOperationType.Scroll,
+            PlanOperationType.PressBack,
+            PlanOperationType.PressHome,
+            PlanOperationType.OpenApp,
+            PlanOperationType.WaitForScreen,
+            PlanOperationType.FindNode,
+            PlanOperationType.TapNode,
+            PlanOperationType.ClickButtonByText,
+            PlanOperationType.SelectOption -> Unit
+            PlanOperationType.SetText,
+            PlanOperationType.AppendText,
+            PlanOperationType.FillForm,
+            PlanOperationType.SetFieldByLabel,
+            PlanOperationType.SetFieldByHint,
+            PlanOperationType.SetFieldByNodeId -> {
+                validateContent("operation ${index + 1} text", operation.text ?: operation.content, errors)
+                validateSensitiveField(operation, errors)
+            }
+            PlanOperationType.SubmitForm -> {
+                if (!operation.requiresFinalSubmitConfirmation) {
+                    errors += "Submit operations must set requiresFinalSubmitConfirmation=true."
+                }
             }
         }
     }
@@ -185,6 +248,26 @@ object PlanValidator {
         val normalized = content.orEmpty().lowercase()
         if (secretMarkers.any { normalized.contains(it) }) {
             errors += "$label appears to contain sensitive data."
+        }
+    }
+
+    private fun validateSensitiveField(operation: PlanOperation, errors: MutableList<String>) {
+        val haystack = listOfNotNull(
+            operation.text,
+            operation.label,
+            operation.targetTextOrHint,
+            operation.targetViewIdResourceName
+        ).joinToString(" ").lowercase()
+        val sensitiveMarkers = listOf("password", "passwort", "pin", "tan", "2fa", "captcha", "kreditkarte", "iban")
+        if (sensitiveMarkers.any { haystack.contains(it) }) {
+            errors += "Sensitive form fields cannot be filled automatically."
+        }
+    }
+
+    private fun isFinalSubmitText(text: String?): Boolean {
+        val normalized = text.orEmpty().lowercase()
+        return listOf("absenden", "submit", "send", "post", "kaufen", "bestellen", "buchen", "pay").any {
+            normalized.contains(it)
         }
     }
 }

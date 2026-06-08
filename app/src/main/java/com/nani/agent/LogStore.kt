@@ -32,6 +32,10 @@ object LogStore {
         appendLine(context, "${Instant.now()} saf_action operation=$operation result=$result")
     }
 
+    fun appendUiAction(context: Context, operation: String, result: String) {
+        appendLine(context, "${Instant.now()} ui_action operation=$operation result=$result")
+    }
+
     fun readRecent(context: Context, limit: Int = 80): List<String> {
         val file = logFile(context)
         if (!file.exists()) return emptyList()

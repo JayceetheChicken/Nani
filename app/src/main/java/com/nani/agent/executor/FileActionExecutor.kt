@@ -78,6 +78,7 @@ class FileActionExecutor(
                     PlanOperationType.OpenUrl,
                     PlanOperationType.UseApp,
                     PlanOperationType.Unsupported -> error("Operation is not a file operation in this build: ${operation.rawOp}")
+                    else -> error("Operation is not a file operation: ${operation.rawOp}")
                 }
                 successes += message
                 LogStore.appendSafAction(context, operation.rawOp, "success")

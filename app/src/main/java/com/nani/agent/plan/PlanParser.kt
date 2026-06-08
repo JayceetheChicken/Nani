@@ -38,7 +38,16 @@ object PlanParser {
                             content = operation.optStringOrNull("content"),
                             query = operation.optStringOrNull("query"),
                             url = operation.optStringOrNull("url"),
-                            reason = operation.optStringOrNull("reason")
+                            reason = operation.optStringOrNull("reason"),
+                            text = operation.optStringOrNull("text"),
+                            label = operation.optStringOrNull("label"),
+                            targetTextOrHint = operation.optJSONObject("target")?.optStringOrNull("textOrHint")
+                                ?: operation.optStringOrNull("hint"),
+                            targetViewIdResourceName = operation.optJSONObject("target")?.optStringOrNull("viewIdResourceName")
+                                ?: operation.optStringOrNull("viewIdResourceName"),
+                            targetNodeId = operation.optJSONObject("target")?.optIntOrNull("nodeId")
+                                ?: operation.optIntOrNull("nodeId"),
+                            requiresFinalSubmitConfirmation = operation.optBoolean("requiresFinalSubmitConfirmation", false)
                         )
                     )
                 }
@@ -55,5 +64,9 @@ object PlanParser {
 
     private fun JSONObject.optStringOrNull(name: String): String? {
         return if (has(name) && !isNull(name)) optString(name).takeIf { it.isNotBlank() } else null
+    }
+
+    private fun JSONObject.optIntOrNull(name: String): Int? {
+        return if (has(name) && !isNull(name)) optInt(name) else null
     }
 }

@@ -10,6 +10,9 @@ data class AiPlan(
 )
 
 enum class AiAction(val wireName: String) {
+    ReadScreen("read_screen"),
+    FillForm("fill_form"),
+    WorkOnWebpage("work_on_webpage"),
     ReadFiles("read_files"),
     WriteFiles("write_files"),
     EditFiles("edit_files"),

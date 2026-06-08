@@ -9,7 +9,11 @@ object NetworkPolicy {
         "upload_file",
         "share_file",
         "send_message",
-        "send_email"
+        "send_email",
+        "work_on_webpage",
+        "fill_form",
+        "submit_form",
+        "click_button_by_text"
     )
 
     fun operationRequiresInternetConfirmation(operation: String): Boolean {

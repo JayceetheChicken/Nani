@@ -55,6 +55,9 @@ import com.nani.agent.saf.BroadFileRepository
 import com.nani.agent.saf.BroadStorageAccess
 import com.nani.agent.saf.SafFileRepository
 import com.nani.agent.saf.SafRootStore
+import com.nani.agent.uiagent.ScreenSnapshot
+import com.nani.agent.uiagent.ScreenStateStore
+import com.nani.agent.uiagent.UiAgentController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -103,10 +106,15 @@ private fun MainScreen() {
     var executionResult by remember { mutableStateOf<ActionExecutionResult?>(null) }
     var executionLoading by remember { mutableStateOf(false) }
     var internetConfirmed by remember { mutableStateOf(false) }
+    var finalSubmitConfirmed by remember { mutableStateOf(false) }
+    var executionPaused by remember { mutableStateOf(false) }
+    var executionStopped by remember { mutableStateOf(false) }
     var planJsonVisible by remember { mutableStateOf(false) }
     var aiTestPlan by remember { mutableStateOf<AiPlan?>(null) }
     var aiTestLoading by remember { mutableStateOf(false) }
     var workFolderScanning by remember { mutableStateOf(false) }
+    var screenSnapshot by remember { mutableStateOf(ScreenStateStore.latest()) }
+    var screenMessage by remember { mutableStateOf<String?>(null) }
     var logs by remember { mutableStateOf(LogStore.readRecent(context, limit = 50)) }
 
     val openTreeLauncher = rememberLauncherForActivityResult(
@@ -138,6 +146,7 @@ private fun MainScreen() {
             guardEnabled = AgentPrefs.isGuardEnabled(context)
             aiSettings = AiPrefs.load(context)
             broadStorageGranted = BroadStorageAccess.isGranted()
+            screenSnapshot = ScreenStateStore.latest()
             logs = LogStore.readRecent(context, limit = 50)
             delay(1_000)
         }
@@ -155,6 +164,10 @@ private fun MainScreen() {
             style = MaterialTheme.typography.headlineLarge,
             fontWeight = FontWeight.Bold
         )
+        Text(
+            text = "Personal Android Agent",
+            style = MaterialTheme.typography.titleMedium
+        )
 
         StatusCard(
             accessibilityEnabled = accessibilityEnabled,
@@ -163,6 +176,7 @@ private fun MainScreen() {
             aiProvider = AiProviderFactory.providerStatus(aiSettings),
             workFolder = shortUri(workFolderUri),
             fileAccessMode = fileAccessMode(workFolderUri, broadStorageGranted),
+            currentApp = screenSnapshot?.appLabel ?: screenSnapshot?.foregroundPackage ?: "Unknown",
             onOpenSettings = {
                 context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             },
@@ -256,6 +270,22 @@ private fun MainScreen() {
             isScanning = workFolderScanning
         )
 
+        ScreenCard(
+            snapshot = screenSnapshot,
+            message = screenMessage,
+            onRefresh = {
+                val refreshed = UiAgentController().readScreen()
+                screenSnapshot = refreshed
+                screenMessage = if (refreshed == null) {
+                    "Accessibility is not ready or no active screen is available."
+                } else {
+                    LogStore.appendUiAction(context, "read_screen", "success")
+                    logs = LogStore.readRecent(context, limit = 50)
+                    "Screen refreshed."
+                }
+            }
+        )
+
         AgentCommandCenterCard(
             command = commandText,
             message = commandMessage,
@@ -274,6 +304,9 @@ private fun MainScreen() {
                     validationResult = null
                     executionResult = null
                     internetConfirmed = false
+                    finalSubmitConfirmed = false
+                    executionPaused = false
+                    executionStopped = false
                 } else {
                     coroutineScope.launch {
                         commandLoading = true
@@ -281,6 +314,9 @@ private fun MainScreen() {
                         executionResult = null
                         try {
                             internetConfirmed = false
+                            finalSubmitConfirmed = false
+                            executionPaused = false
+                            executionStopped = false
                             val settings = AiPrefs.load(context)
                             val provider = AiProviderFactory.create(settings)
                             val plan = provider.generatePlan(commandText)
@@ -290,6 +326,7 @@ private fun MainScreen() {
                                 executablePlan = null
                                 validationResult = null
                                 internetConfirmed = false
+                                finalSubmitConfirmed = false
                                 LogStore.appendAiPlanGenerated(
                                     context = context,
                                     provider = providerLogName(settings),
@@ -329,6 +366,9 @@ private fun MainScreen() {
             executablePlan = executablePlan,
             validationResult = validationResult,
             internetConfirmed = internetConfirmed,
+            finalSubmitConfirmed = finalSubmitConfirmed,
+            executionPaused = executionPaused,
+            executionStopped = executionStopped,
             isExecuting = executionLoading,
             jsonVisible = planJsonVisible,
             onAllowInternet = {
@@ -340,6 +380,9 @@ private fun MainScreen() {
                         internetConfirmed = true
                     )
                 }
+            },
+            onAllowFinalSubmit = {
+                finalSubmitConfirmed = true
             },
             onCancelInternet = {
                 internetConfirmed = false
@@ -356,24 +399,49 @@ private fun MainScreen() {
                 validationResult = null
                 executionResult = null
                 internetConfirmed = false
+                finalSubmitConfirmed = false
+                executionPaused = false
+                executionStopped = false
                 planJsonVisible = false
+            },
+            onPause = {
+                executionPaused = true
+                executionResult = ActionExecutionResult(
+                    successes = emptyList(),
+                    failures = emptyList(),
+                    warnings = listOf("Execution is paused. Resume by pressing Execute again.")
+                )
+            },
+            onStop = {
+                executionStopped = true
+                executionLoading = false
+                executionResult = ActionExecutionResult(
+                    successes = emptyList(),
+                    failures = listOf("Execution stopped by user."),
+                    warnings = emptyList()
+                )
+                LogStore.appendUiAction(context, "stop", "success")
+                logs = LogStore.readRecent(context, limit = 50)
             },
             onExecute = {
                 val executable = executablePlan ?: return@PlanPreviewCard
+                executionPaused = false
                 val validation = PlanValidator.validate(
                     plan = executable,
                     hasWorkFolder = hasFileRoot(workFolderUri, broadStorageGranted),
                     internetConfirmed = internetConfirmed
                 )
                 validationResult = validation
-                if (validation.canExecute) {
+                if (validation.canExecute && !executionStopped) {
                     coroutineScope.launch {
                         executionLoading = true
                         try {
                             executionResult = AgentExecutionController(context).execute(
                                 plan = executable,
-                                internetConfirmed = internetConfirmed
+                                internetConfirmed = internetConfirmed,
+                                finalSubmitConfirmed = finalSubmitConfirmed
                             )
+                            screenSnapshot = ScreenStateStore.latest()
                             logs = LogStore.readRecent(context, limit = 50)
                         } finally {
                             executionLoading = false
@@ -431,6 +499,7 @@ private fun StatusCard(
     aiProvider: String,
     workFolder: String,
     fileAccessMode: String,
+    currentApp: String,
     onOpenSettings: () -> Unit,
     onToggleAgent: () -> Unit,
     onToggleGuard: () -> Unit
@@ -452,6 +521,7 @@ private fun StatusCard(
             StatusRow(label = "Work Folder", value = workFolder)
             StatusRow(label = "File Access Mode", value = fileAccessMode)
             StatusRow(label = "Internet Gate", value = "Internet actions require confirmation")
+            StatusRow(label = "Current App", value = currentApp)
             Button(onClick = onToggleAgent) {
                 Text(if (agentEnabled) "Deactivate Nani Agent" else "Activate Nani Agent")
             }
@@ -460,6 +530,37 @@ private fun StatusCard(
             }
             Button(onClick = onOpenSettings) {
                 Text("Open Accessibility Settings")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScreenCard(
+    snapshot: ScreenSnapshot?,
+    message: String?,
+    onRefresh: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "Current Screen",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text("App: ${snapshot?.appLabel ?: snapshot?.foregroundPackage ?: "Unknown"}")
+            Text("Detected UI elements: ${snapshot?.nodes?.size ?: 0}")
+            snapshot?.nodes.orEmpty().take(8).forEach {
+                Text(it.compactLine(), style = MaterialTheme.typography.bodySmall)
+            }
+            Button(onClick = onRefresh) {
+                Text("Bildschirm neu lesen")
+            }
+            if (message != null) {
+                Text(message, style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -529,15 +630,16 @@ private fun AgentCommandCenterCard(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "Agent Command Center",
+                text = "Was soll Nani tun?",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold
             )
+            Text("Beispiele: Öffne Chrome und suche nach ..., Fülle dieses Formular aus, Lies diese Webseite zusammen, Sortiere meine Downloads.")
             OutlinedTextField(
                 value = command,
                 onValueChange = onCommandChanged,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Command for Nani") },
+                label = { Text("Was soll Nani tun?") },
                 placeholder = { Text("Sortiere meine PDFs für Schule") },
                 minLines = 3,
                 maxLines = 6
@@ -565,12 +667,18 @@ private fun PlanPreviewCard(
     executablePlan: ExecutablePlan?,
     validationResult: PlanValidationResult?,
     internetConfirmed: Boolean,
+    finalSubmitConfirmed: Boolean,
+    executionPaused: Boolean,
+    executionStopped: Boolean,
     isExecuting: Boolean,
     jsonVisible: Boolean,
     onAllowInternet: () -> Unit,
+    onAllowFinalSubmit: () -> Unit,
     onCancelInternet: () -> Unit,
     onToggleJson: () -> Unit,
     onDiscard: () -> Unit,
+    onPause: () -> Unit,
+    onStop: () -> Unit,
     onExecute: () -> Unit
 ) {
     if (plan == null || executablePlan == null) return
@@ -590,6 +698,7 @@ private fun PlanPreviewCard(
             Text("Risk: ${plan.riskLevel.wireName}")
             Text("Requires confirmation: ${plan.requiresConfirmation}")
             Text("Requires internet confirmation: ${plan.requiresInternetConfirmation}")
+            Text("Requires final submit confirmation: ${validationResult?.requiresFinalSubmitConfirmation == true}")
             Text(plan.explanation)
             if (plan.actionType == AiAction.Blocked) {
                 Text(
@@ -606,6 +715,9 @@ private fun PlanPreviewCard(
                     onAllowInternet = onAllowInternet,
                     onCancelInternet = onCancelInternet
                 )
+            }
+            if (validationResult?.requiresFinalSubmitConfirmation == true && !finalSubmitConfirmed) {
+                FinalSubmitConfirmationCard(onAllowFinalSubmit = onAllowFinalSubmit)
             }
             validationResult?.let { validation ->
                 if (validation.errors.isNotEmpty()) {
@@ -627,8 +739,14 @@ private fun PlanPreviewCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Button(onClick = onExecute, enabled = canExecute && !isExecuting) {
+                Button(onClick = onExecute, enabled = canExecute && !isExecuting && !executionStopped) {
                     Text(if (isExecuting) "Ausführen..." else "Ausführen")
+                }
+                Button(onClick = onPause, enabled = !executionPaused && !executionStopped) {
+                    Text("Pause")
+                }
+                Button(onClick = onStop) {
+                    Text("Stop")
                 }
                 Button(onClick = onDiscard) {
                     Text("Verwerfen")
@@ -667,6 +785,24 @@ private fun InternetConfirmationCard(
                 Button(onClick = onCancelInternet) {
                     Text("Abbrechen")
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FinalSubmitConfirmationCard(
+    onAllowFinalSubmit: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Final Submit Confirmation", fontWeight = FontWeight.SemiBold)
+            Text("Formular wirklich absenden? Sending, posting, buying, booking, or mailing always needs this extra confirmation.")
+            Button(onClick = onAllowFinalSubmit) {
+                Text("Formular absenden erlauben")
             }
         }
     }
@@ -1012,6 +1148,23 @@ private fun operationText(operation: PlanOperation): String {
         "rename_file" -> "Datei umbenennen: ${operation.from.orEmpty()} -> ${operation.to.orEmpty()}"
         "open_url" -> "Internet/URL öffnen: ${operation.url.orEmpty()}"
         "use_app" -> "App-Aktion: ${operation.reason.orEmpty()}"
+        "read_screen" -> "Aktuellen Bildschirm lesen"
+        "tap_node" -> "Sichtbares UI-Element antippen: ${operation.targetTextOrHint ?: operation.text.orEmpty()}"
+        "set_text" -> "Textfeld ausfüllen: ${operation.targetTextOrHint.orEmpty()}"
+        "append_text" -> "Text anfügen: ${operation.targetTextOrHint.orEmpty()}"
+        "scroll" -> "Sichtbaren Bereich scrollen"
+        "press_back" -> "Zurück drücken"
+        "press_home" -> "Home drücken"
+        "open_app" -> "Erlaubte App öffnen"
+        "wait_for_screen" -> "Auf Bildschirm warten"
+        "find_node" -> "UI-Element suchen: ${operation.targetTextOrHint ?: operation.text.orEmpty()}"
+        "select_option" -> "Option auswählen: ${operation.targetTextOrHint ?: operation.text.orEmpty()}"
+        "fill_form" -> "Formular vorbereiten"
+        "set_field_by_label" -> "Feld ausfüllen: ${operation.label.orEmpty()}"
+        "set_field_by_hint" -> "Feld nach Hinweis ausfüllen: ${operation.targetTextOrHint.orEmpty()}"
+        "set_field_by_node_id" -> "Feld nach Node-ID ausfüllen: ${operation.targetNodeId ?: "-"}"
+        "click_button_by_text" -> "Button klicken: ${operation.text.orEmpty()}"
+        "submit_form" -> "Formular absenden, nur nach Extra-Bestätigung"
         else -> "Nicht unterstützte Operation: ${operation.rawOp}"
     }
 }

@@ -133,6 +133,47 @@ class PlanValidatorTest {
         assertTrue(PlanValidator.validate(plan, hasWorkFolder = true, internetConfirmed = true).isValid)
     }
 
+    @Test
+    fun blocksSensitiveFormFields() {
+        val plan = basePlan(
+            actionType = AiAction.FillForm,
+            requiresConfirmation = true,
+            operations = listOf(
+                PlanOperation(
+                    op = PlanOperationType.SetFieldByLabel,
+                    rawOp = "set_field_by_label",
+                    label = "Passwort",
+                    text = "secret"
+                )
+            )
+        )
+
+        val result = PlanValidator.validate(plan, hasWorkFolder = false)
+
+        assertFalse(result.isValid)
+        assertTrue(result.errors.any { it.contains("Sensitive form") })
+    }
+
+    @Test
+    fun submitRequiresAskConfirmationAction() {
+        val plan = basePlan(
+            actionType = AiAction.FillForm,
+            requiresConfirmation = true,
+            requiresInternetConfirmation = true,
+            operations = listOf(
+                PlanOperation(
+                    op = PlanOperationType.SubmitForm,
+                    rawOp = "submit_form",
+                    requiresFinalSubmitConfirmation = true
+                )
+            )
+        )
+        val confirmationPlan = plan.copy(actionType = AiAction.AskConfirmation)
+
+        assertFalse(PlanValidator.validate(plan, hasWorkFolder = false, internetConfirmed = true).isValid)
+        assertTrue(PlanValidator.validate(confirmationPlan, hasWorkFolder = false, internetConfirmed = true).isValid)
+    }
+
     private fun basePlan(
         actionType: AiAction = AiAction.OrganizeFiles,
         requiresConfirmation: Boolean = true,
