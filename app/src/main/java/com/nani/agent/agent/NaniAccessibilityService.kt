@@ -19,6 +19,8 @@ class NaniAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (!AgentPrefs.isAgentEnabled(this)) return
+
         val packageName = event?.packageName?.toString().orEmpty()
         if (packageName.isBlank() || packageName == lastForegroundPackage) return
 
@@ -26,7 +28,11 @@ class NaniAccessibilityService : AccessibilityService() {
         LogStore.appendForegroundPackage(this, packageName)
 
         when (SecurityPolicy.decisionFor(packageName)) {
-            SecurityDecision.Block -> exitBlockedPackage(packageName)
+            SecurityDecision.Block -> {
+                if (AgentPrefs.isGuardEnabled(this)) {
+                    exitBlockedPackage(packageName)
+                }
+            }
             SecurityDecision.Allow,
             SecurityDecision.ObserveOnly -> Unit
         }

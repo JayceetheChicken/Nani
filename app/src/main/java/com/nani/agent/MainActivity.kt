@@ -60,13 +60,15 @@ fun NaniApp() {
 private fun MainScreen() {
     val context = LocalContext.current
     var accessibilityEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
-    var agentRunning by remember { mutableStateOf(AgentPrefs.isRunning(context)) }
+    var agentEnabled by remember { mutableStateOf(AgentPrefs.isAgentEnabled(context)) }
+    var guardEnabled by remember { mutableStateOf(AgentPrefs.isGuardEnabled(context)) }
     var logs by remember { mutableStateOf(LogStore.readRecent(context, limit = 40)) }
 
     LaunchedEffect(Unit) {
         while (true) {
             accessibilityEnabled = isAccessibilityServiceEnabled(context)
-            agentRunning = AgentPrefs.isRunning(context)
+            agentEnabled = AgentPrefs.isAgentEnabled(context)
+            guardEnabled = AgentPrefs.isGuardEnabled(context)
             logs = LogStore.readRecent(context, limit = 40)
             delay(1_000)
         }
@@ -87,11 +89,32 @@ private fun MainScreen() {
 
         StatusCard(
             accessibilityEnabled = accessibilityEnabled,
-            agentRunning = agentRunning,
+            agentEnabled = agentEnabled,
+            guardEnabled = guardEnabled,
             onOpenSettings = {
                 context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            },
+            onToggleAgent = {
+                val enabled = !AgentPrefs.isAgentEnabled(context)
+                AgentPrefs.setAgentEnabled(context, enabled)
+                LogStore.appendControlChange(context, control = "agent", enabled = enabled)
+                agentEnabled = AgentPrefs.isAgentEnabled(context)
+                logs = LogStore.readRecent(context, limit = 40)
+            },
+            onToggleGuard = {
+                val enabled = !AgentPrefs.isGuardEnabled(context)
+                AgentPrefs.setGuardEnabled(context, enabled)
+                LogStore.appendControlChange(context, control = "guard", enabled = enabled)
+                guardEnabled = AgentPrefs.isGuardEnabled(context)
+                logs = LogStore.readRecent(context, limit = 40)
             }
         )
+
+        if (!agentEnabled) {
+            WarningCard("Nani Agent is disabled. No monitoring, logging, or blocking is active.")
+        } else if (!guardEnabled) {
+            WarningCard("Nani Guard is disabled. Nani is logging only and will not block protected screens.")
+        }
 
         SecurityRulesCard()
 
@@ -102,8 +125,11 @@ private fun MainScreen() {
 @Composable
 private fun StatusCard(
     accessibilityEnabled: Boolean,
-    agentRunning: Boolean,
-    onOpenSettings: () -> Unit
+    agentEnabled: Boolean,
+    guardEnabled: Boolean,
+    onOpenSettings: () -> Unit,
+    onToggleAgent: () -> Unit,
+    onToggleGuard: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -116,11 +142,30 @@ private fun StatusCard(
                 fontWeight = FontWeight.SemiBold
             )
             StatusRow(label = "Accessibility", value = if (accessibilityEnabled) "Enabled" else "Disabled")
-            StatusRow(label = "Agent", value = if (agentRunning) "Running" else "Stopped")
+            StatusRow(label = "Agent", value = if (agentEnabled) "Active" else "Disabled")
+            StatusRow(label = "Guard", value = if (guardEnabled) "Active" else "Disabled")
+            Button(onClick = onToggleAgent) {
+                Text(if (agentEnabled) "Deactivate Nani Agent" else "Activate Nani Agent")
+            }
+            Button(onClick = onToggleGuard) {
+                Text(if (guardEnabled) "Deactivate Nani Guard" else "Activate Nani Guard")
+            }
             Button(onClick = onOpenSettings) {
                 Text("Open Accessibility Settings")
             }
         }
+    }
+}
+
+@Composable
+private fun WarningCard(message: String) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = message,
+            modifier = Modifier.padding(16.dp),
+            color = MaterialTheme.colorScheme.error,
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }
 
@@ -151,8 +196,8 @@ private fun SecurityRulesCard() {
             Text("No file deletion is implemented.")
             Text("No device administrator, root, or overlay permissions are requested.")
             Text("Accessibility stays inactive until manually enabled in Android settings.")
-            Text("Foreground packages are logged to app-private storage.")
-            Text("Settings and permission-management screens are blocked with Back, then Home.")
+            Text("When the agent is active, foreground packages are logged to app-private storage.")
+            Text("When the guard is active, Settings and permission-management screens are blocked with Back, then Home.")
             Text("Unknown apps are observe-only. No arbitrary app automation is implemented.")
             Text("No Google Drive API and no AI model are included.")
         }
