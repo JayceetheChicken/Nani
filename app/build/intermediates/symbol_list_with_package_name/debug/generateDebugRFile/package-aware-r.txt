@@ -1,0 +1,13 @@
+com.nani.agent
+color nani_seed
+drawable ic_launcher_background
+drawable ic_launcher_foreground
+mipmap ic_launcher
+mipmap ic_launcher_round
+string accessibility_service_description
+string accessibility_service_label
+string app_name
+style Theme_Nani
+xml backup_rules
+xml data_extraction_rules
+xml nani_accessibility_service
