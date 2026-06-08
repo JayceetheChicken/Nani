@@ -72,6 +72,7 @@ private fun MainScreen() {
     var guardEnabled by remember { mutableStateOf(AgentPrefs.isGuardEnabled(context)) }
     var aiSettings by remember { mutableStateOf(AiPrefs.load(context)) }
     var aiTestPlan by remember { mutableStateOf<AiPlan?>(null) }
+    var aiTestLoading by remember { mutableStateOf(false) }
     var logs by remember { mutableStateOf(LogStore.readRecent(context, limit = 40)) }
     val coroutineScope = rememberCoroutineScope()
 
@@ -130,6 +131,7 @@ private fun MainScreen() {
         AiSettingsCard(
             settings = aiSettings,
             testPlan = aiTestPlan,
+            isTesting = aiTestLoading,
             onSettingsChanged = { aiSettings = it },
             onSave = {
                 AiPrefs.save(context, aiSettings)
@@ -137,18 +139,23 @@ private fun MainScreen() {
             },
             onTest = {
                 coroutineScope.launch {
+                    aiTestLoading = true
                     val savedSettings = aiSettings
-                    AiPrefs.save(context, savedSettings)
-                    val provider = AiProviderFactory.create(savedSettings)
-                    val plan = provider.generatePlan("Sortiere meine PDFs fÃ¼r Schule")
-                    aiTestPlan = plan
-                    LogStore.appendAiTest(
-                        context = context,
-                        provider = providerLogName(savedSettings),
-                        actionType = plan.actionType.wireName,
-                        riskLevel = plan.riskLevel.wireName
-                    )
-                    logs = LogStore.readRecent(context, limit = 40)
+                    try {
+                        AiPrefs.save(context, savedSettings)
+                        val provider = AiProviderFactory.create(savedSettings)
+                        val plan = provider.generatePlan("Sortiere meine PDFs für Schule")
+                        aiTestPlan = plan
+                        LogStore.appendAiTest(
+                            context = context,
+                            provider = providerLogName(savedSettings),
+                            actionType = plan.actionType.wireName,
+                            riskLevel = plan.riskLevel.wireName
+                        )
+                        logs = LogStore.readRecent(context, limit = 40)
+                    } finally {
+                        aiTestLoading = false
+                    }
                 }
             }
         )
@@ -163,6 +170,7 @@ private fun MainScreen() {
 private fun AiSettingsCard(
     settings: AiSettings,
     testPlan: AiPlan?,
+    isTesting: Boolean,
     onSettingsChanged: (AiSettings) -> Unit,
     onSave: () -> Unit,
     onTest: () -> Unit
@@ -237,9 +245,12 @@ private fun AiSettingsCard(
                 Button(onClick = onSave) {
                     Text("Save AI Settings")
                 }
-                Button(onClick = onTest) {
-                    Text("Test AI")
+                Button(onClick = onTest, enabled = !isTesting) {
+                    Text(if (isTesting) "Testing AI..." else "Test AI")
                 }
+            }
+            if (isTesting) {
+                Text("Testing selected AI provider...")
             }
             if (testPlan != null) {
                 Text(

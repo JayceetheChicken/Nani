@@ -13,11 +13,23 @@ enum class AiAction(val wireName: String) {
     SuggestMoveFiles("suggest_move_files"),
     SummarizeFolder("summarize_folder"),
     AskClarifyingQuestion("ask_clarifying_question"),
-    Blocked("blocked")
+    Blocked("blocked");
+
+    companion object {
+        fun fromWireName(value: String): AiAction? {
+            return entries.firstOrNull { it.wireName == value }
+        }
+    }
 }
 
 enum class AiRiskLevel(val wireName: String) {
     Low("low"),
     Medium("medium"),
-    High("high")
+    High("high");
+
+    companion object {
+        fun fromWireName(value: String): AiRiskLevel? {
+            return entries.firstOrNull { it.wireName == value }
+        }
+    }
 }

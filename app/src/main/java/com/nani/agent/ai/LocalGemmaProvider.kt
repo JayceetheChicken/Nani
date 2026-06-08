@@ -6,7 +6,7 @@ class LocalGemmaProvider : AiProvider {
         // TODO: Keep this provider name bound to the planned Gemma 4 E2B local runtime.
         val normalized = userCommand.lowercase()
         return when {
-            "lösche" in normalized || "loesche" in normalized || "lÃ¶sche" in normalized -> plan(
+            "lösche" in normalized || "loesche" in normalized -> plan(
                 actionType = AiAction.Blocked,
                 explanation = "Deleting files is disabled.",
                 requiresConfirmation = false,
