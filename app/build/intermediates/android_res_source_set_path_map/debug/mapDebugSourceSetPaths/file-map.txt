@@ -1,8 +1,0 @@
-com.nani.agent.app-pngs-0 C:\Users\nilsv\Documents\GitHub\Nani\app\build\generated\res\pngs\debug
-com.nani.agent.app-updated_navigation_xml-1 C:\Users\nilsv\Documents\GitHub\Nani\app\build\generated\updated_navigation_xml\debug
-com.nani.agent.app-packageDebugResources-2 C:\Users\nilsv\Documents\GitHub\Nani\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
-com.nani.agent.app-packageDebugResources-3 C:\Users\nilsv\Documents\GitHub\Nani\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
-com.nani.agent.app-debug-4 C:\Users\nilsv\Documents\GitHub\Nani\app\build\intermediates\merged_res\debug\mergeDebugResources
-com.nani.agent.app-debug-5 C:\Users\nilsv\Documents\GitHub\Nani\app\src\debug\res
-com.nani.agent.app-main-6 C:\Users\nilsv\Documents\GitHub\Nani\app\src\main\res
-gradleHome-0 C:\Users\nilsv\.gradle
