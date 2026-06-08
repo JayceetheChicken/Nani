@@ -13,13 +13,15 @@ class LocalGemmaProvider : AiProvider {
                 actionType = AiAction.Blocked,
                 explanation = "Deleting files is disabled.",
                 requiresConfirmation = false,
+                requiresInternetConfirmation = false,
                 riskLevel = AiRiskLevel.High,
                 operations = emptyList()
             )
             "ordner erstellen" in normalized || "erstelle ordner" in normalized -> plan(
-                actionType = AiAction.CreateFolders,
+                actionType = AiAction.WriteFiles,
                 explanation = "Nani can create folders after preview and confirmation.",
                 requiresConfirmation = true,
+                requiresInternetConfirmation = false,
                 riskLevel = AiRiskLevel.Medium,
                 operations = listOf(
                     JSONObject()
@@ -28,31 +30,68 @@ class LocalGemmaProvider : AiProvider {
                 )
             )
             "sortiere" in normalized || "verschiebe" in normalized -> plan(
-                actionType = AiAction.SuggestCopyFiles,
-                explanation = "Nani can suggest a safe copy plan. Originals stay unchanged.",
+                actionType = AiAction.OrganizeFiles,
+                explanation = "Local Dummy can suggest target folders for sorting. Originals stay unchanged.",
                 requiresConfirmation = true,
+                requiresInternetConfirmation = false,
                 riskLevel = AiRiskLevel.Medium,
                 operations = listOf(
                     JSONObject()
                         .put("op", "create_folder")
-                        .put("path", "Schule"),
+                        .put("path", "Schule")
+                )
+            )
+            "erstelle datei" in normalized || "datei erstellen" in normalized -> plan(
+                actionType = AiAction.WriteFiles,
+                explanation = "Nani can create a text file after preview and confirmation.",
+                requiresConfirmation = true,
+                requiresInternetConfirmation = false,
+                riskLevel = AiRiskLevel.Medium,
+                operations = listOf(
                     JSONObject()
-                        .put("op", "copy_file")
-                        .put("from", "Downloads/beispiel.pdf")
-                        .put("to", "Schule/beispiel.pdf")
+                        .put("op", "create_file")
+                        .put("path", "Notizen/nani-notiz.txt")
+                        .put("content", "Neue Nani-Notiz")
+                )
+            )
+            "umbenennen" in normalized -> plan(
+                actionType = AiAction.OrganizeFiles,
+                explanation = "Nani can rename files after preview and confirmation.",
+                requiresConfirmation = true,
+                requiresInternetConfirmation = false,
+                riskLevel = AiRiskLevel.Medium,
+                operations = listOf(
+                    JSONObject()
+                        .put("op", "rename_file")
+                        .put("from", "alte-datei.txt")
+                        .put("to", "neue-datei.txt")
                 )
             )
             "zeige" in normalized || "liste" in normalized -> plan(
-                actionType = AiAction.ListFiles,
+                actionType = AiAction.ReadFiles,
                 explanation = "Nani can list files inside the selected work folder.",
                 requiresConfirmation = false,
+                requiresInternetConfirmation = false,
                 riskLevel = AiRiskLevel.Low,
                 operations = listOf(JSONObject().put("op", "list_files"))
             )
+            "lies" in normalized || "lese" in normalized -> plan(
+                actionType = AiAction.ReadFiles,
+                explanation = "Nani can read a text file inside the selected work folder.",
+                requiresConfirmation = false,
+                requiresInternetConfirmation = false,
+                riskLevel = AiRiskLevel.Low,
+                operations = listOf(
+                    JSONObject()
+                        .put("op", "read_file")
+                        .put("path", "Notizen/nani-notiz.txt")
+                )
+            )
             "zusammenfassen" in normalized || "summary" in normalized -> plan(
-                actionType = AiAction.SummarizeFolder,
+                actionType = AiAction.ReadFiles,
                 explanation = "Nani can summarize the selected work folder.",
                 requiresConfirmation = false,
+                requiresInternetConfirmation = false,
                 riskLevel = AiRiskLevel.Low,
                 operations = listOf(JSONObject().put("op", "summarize_folder"))
             )
@@ -60,6 +99,7 @@ class LocalGemmaProvider : AiProvider {
                 actionType = AiAction.AskClarifyingQuestion,
                 explanation = "Nani needs a clearer command before proposing a safe JSON plan.",
                 requiresConfirmation = false,
+                requiresInternetConfirmation = false,
                 riskLevel = AiRiskLevel.Low,
                 operations = emptyList()
             )
@@ -70,6 +110,7 @@ class LocalGemmaProvider : AiProvider {
         actionType: AiAction,
         explanation: String,
         requiresConfirmation: Boolean,
+        requiresInternetConfirmation: Boolean,
         riskLevel: AiRiskLevel,
         operations: List<JSONObject>
     ): AiPlan {
@@ -82,6 +123,7 @@ class LocalGemmaProvider : AiProvider {
             actionType = actionType,
             explanation = explanation,
             requiresConfirmation = requiresConfirmation,
+            requiresInternetConfirmation = requiresInternetConfirmation,
             riskLevel = riskLevel,
             proposedJson = proposedJson
         )

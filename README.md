@@ -2,33 +2,100 @@
 
 Nani is a controlled Android screen/file agent intended to run inside a separate Android user profile on a Samsung tablet.
 
-## Current MVP
+Nani plans through an AI provider, validates every plan locally, shows a preview, and only executes locally allowed operations. The AI never directly controls Android, files, permissions, or apps.
 
-- API-powered planning via DeepSeek, OpenAI-compatible, or custom `/chat/completions` APIs.
-- DeepSeek is the recommended default provider.
-- Local Dummy / Gemma planned provider for deterministic offline test plans only.
-- Android Storage Access Framework work folder selection.
-- Persisted SAF work-folder permission.
-- Files can be listed inside the selected work folder.
-- Folders can be created inside the selected work folder.
-- Files can be safely copied inside the selected work folder.
-- Existing files are not overwritten; copy targets get a suffix when needed.
-- Preview and local validation before execution.
-- Explicit user confirmation through the Execute button.
-- Foreground app logging and Settings/permission-screen guard.
-- Action and plan logs without API keys, full prompts, full API responses, or full JSON plans.
+## Current Agent MVP
 
-## Not Implemented
+- Compose main screen with Agent, Guard, Accessibility, AI provider, file access, internet gate, plan preview, execution results, security rules, and logs.
+- DeepSeek API is the recommended default planning provider.
+- OpenAI-compatible and Custom `/chat/completions` providers are available.
+- Local Dummy / Gemma planned provider is a deterministic offline test stub only.
+- SAF Workspace Mode for one or more user-selected work folders.
+- Optional Broad Agent Storage Mode using `MANAGE_EXTERNAL_STORAGE` for local/private builds only.
+- Broad storage status is passive. Nani does not open or operate Android Settings to grant it.
+- Foreground app logging and Settings/permission/package-installer guard remain active when Agent and Guard are enabled.
+- AccessibilityService stays inactive until manually enabled by the user in Android settings.
 
-- File deletion.
-- Real move operations.
-- Rename operations.
-- Google Drive.
-- Real local Gemma inference.
-- Generic Accessibility automation.
-- App installation or uninstallation.
-- Device admin, root, or overlay capabilities.
-- Notification listener or usage access permissions.
+## What Nani Can Do
+
+- List files.
+- Read text files up to the preview limit.
+- Summarize files and folders with local metadata.
+- Search and classify files.
+- Create folders.
+- Create text files.
+- Edit or append text files after preview and confirmation.
+- Copy files without overwriting existing targets.
+- Rename files inside the same allowed folder without overwriting.
+- Use DeepSeek/OpenAI-compatible/Custom API planning when configured.
+- Use Local Dummy for offline safety tests.
+
+## What Nani Cannot Do
+
+- Delete files.
+- Move files by deleting originals.
+- Open or operate Android Settings.
+- Change permissions.
+- Install or uninstall apps.
+- Use root, Device Admin, or overlay permissions.
+- Access the main Android user profile.
+- Operate banking, payment, authenticator, password-manager, Settings, permission, or package-installer screens.
+- Use Browser/Internet/Web/online services without separate user confirmation.
+- Use Google Drive.
+- Run a native local model runtime.
+- Perform generic Accessibility automation or blind clicks in this build.
+
+## File Access Modes
+
+### SAF Workspace Mode
+
+SAF is the recommended mode. The user manually selects one or more work folders. Nani can act only inside the granted workspace roots and still cannot delete files.
+
+### Broad Agent Storage Mode
+
+Broad storage is optional for local/private Agent-profile builds. The manifest declares:
+
+```text
+android.permission.MANAGE_EXTERNAL_STORAGE
+```
+
+At runtime Nani checks `Environment.isExternalStorageManager()`. If access is not granted, the UI only shows:
+
+```text
+Broad file access not granted. Enable manually if you want full Agent-user shared storage access.
+```
+
+The user must grant this manually. Nani must not enter Settings or permission-management screens to grant it.
+
+## Internet Gate
+
+Normal AI planning through the configured provider is allowed because the user explicitly configures it in AI Settings.
+
+Agent actions that use Browser, URLs, uploads, sharing, messages, email, web search, or other online services require a separate plan flag and a separate confirmation in the UI before execution can proceed. Without that confirmation, the executor refuses the plan.
+
+## Example Commands
+
+```text
+Liste meine Dateien
+```
+
+```text
+Fasse den Arbeitsordner zusammen
+```
+
+```text
+Ordner erstellen Schule/Mathe
+```
+
+```text
+Sortiere meine PDFs für Schule
+```
+
+```text
+Lösche alte Dateien
+```
+
+Deletion requests should be blocked by Nani safety rules. Fallback recognition for `loesche` is also kept.
 
 ## DeepSeek Setup
 
@@ -60,35 +127,12 @@ API keys are currently stored locally in SharedPreferences.
 
 TODO: Move API key storage to Android Keystore before production use.
 
-## Example Commands
-
-```text
-Liste meine Dateien
-```
-
-```text
-Fasse den Arbeitsordner zusammen
-```
-
-```text
-Ordner erstellen Schule/Mathe
-```
-
-```text
-Sortiere meine PDFs für Schule
-```
-
-```text
-Lösche alte Dateien
-```
-
-Deletion requests should be blocked by Nani safety rules.
-
 ## Build
 
 From PowerShell:
 
 ```powershell
+.\setup-java.ps1
 .\gradlew.bat assembleDebug
 ```
 

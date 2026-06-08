@@ -5,7 +5,8 @@ data class PlanValidationResult(
     val errors: List<String>,
     val warnings: List<String>,
     val requiresWorkFolder: Boolean,
-    val hasWritingOperations: Boolean
+    val hasWritingOperations: Boolean,
+    val requiresInternetConfirmation: Boolean
 ) {
     val canExecute: Boolean
         get() = isValid

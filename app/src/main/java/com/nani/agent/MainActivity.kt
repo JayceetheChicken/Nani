@@ -43,19 +43,22 @@ import com.nani.agent.ai.AiAction
 import com.nani.agent.ai.AiPlan
 import com.nani.agent.ai.AiPrefs
 import com.nani.agent.ai.AiProviderFactory
-import com.nani.agent.ai.AiRiskLevel
 import com.nani.agent.ai.AiSettings
+import com.nani.agent.executor.AgentExecutionController
 import com.nani.agent.plan.ExecutablePlan
 import com.nani.agent.plan.PlanOperation
 import com.nani.agent.plan.PlanParser
 import com.nani.agent.plan.PlanValidationResult
 import com.nani.agent.plan.PlanValidator
 import com.nani.agent.saf.ActionExecutionResult
-import com.nani.agent.saf.ActionExecutor
+import com.nani.agent.saf.BroadFileRepository
+import com.nani.agent.saf.BroadStorageAccess
 import com.nani.agent.saf.SafFileRepository
 import com.nani.agent.saf.SafRootStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,7 +91,9 @@ private fun MainScreen() {
     var guardEnabled by remember { mutableStateOf(AgentPrefs.isGuardEnabled(context)) }
     var aiSettings by remember { mutableStateOf(AiPrefs.load(context)) }
     var workFolderUri by remember { mutableStateOf(SafRootStore.getRootUri(context)) }
+    var workFolderCount by remember { mutableStateOf(SafRootStore.getRootUris(context).size) }
     var workFolderMessage by remember { mutableStateOf<String?>(null) }
+    var broadStorageGranted by remember { mutableStateOf(BroadStorageAccess.isGranted()) }
     var commandText by remember { mutableStateOf("") }
     var commandMessage by remember { mutableStateOf<String?>(null) }
     var commandLoading by remember { mutableStateOf(false) }
@@ -96,9 +101,12 @@ private fun MainScreen() {
     var executablePlan by remember { mutableStateOf<ExecutablePlan?>(null) }
     var validationResult by remember { mutableStateOf<PlanValidationResult?>(null) }
     var executionResult by remember { mutableStateOf<ActionExecutionResult?>(null) }
+    var executionLoading by remember { mutableStateOf(false) }
+    var internetConfirmed by remember { mutableStateOf(false) }
     var planJsonVisible by remember { mutableStateOf(false) }
     var aiTestPlan by remember { mutableStateOf<AiPlan?>(null) }
     var aiTestLoading by remember { mutableStateOf(false) }
+    var workFolderScanning by remember { mutableStateOf(false) }
     var logs by remember { mutableStateOf(LogStore.readRecent(context, limit = 50)) }
 
     val openTreeLauncher = rememberLauncherForActivityResult(
@@ -110,9 +118,14 @@ private fun MainScreen() {
             SafRootStore.saveRootUri(context, uri)
             LogStore.appendSafAction(context, operation = "select_work_folder", result = "success")
             workFolderUri = uri
+            workFolderCount = SafRootStore.getRootUris(context).size
             workFolderMessage = "Work folder selected."
             executablePlan?.let {
-                validationResult = PlanValidator.validate(it, hasWorkFolder = true)
+                validationResult = PlanValidator.validate(
+                    plan = it,
+                    hasWorkFolder = hasFileRoot(workFolderUri, broadStorageGranted),
+                    internetConfirmed = internetConfirmed
+                )
             }
             logs = LogStore.readRecent(context, limit = 50)
         }
@@ -124,6 +137,7 @@ private fun MainScreen() {
             agentEnabled = AgentPrefs.isAgentEnabled(context)
             guardEnabled = AgentPrefs.isGuardEnabled(context)
             aiSettings = AiPrefs.load(context)
+            broadStorageGranted = BroadStorageAccess.isGranted()
             logs = LogStore.readRecent(context, limit = 50)
             delay(1_000)
         }
@@ -148,6 +162,7 @@ private fun MainScreen() {
             guardEnabled = guardEnabled,
             aiProvider = AiProviderFactory.providerStatus(aiSettings),
             workFolder = shortUri(workFolderUri),
+            fileAccessMode = fileAccessMode(workFolderUri, broadStorageGranted),
             onOpenSettings = {
                 context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
             },
@@ -175,43 +190,70 @@ private fun MainScreen() {
 
         WorkFolderCard(
             rootUri = workFolderUri,
+            rootCount = workFolderCount,
+            broadStorageGranted = broadStorageGranted,
             message = workFolderMessage,
             onSelectFolder = { openTreeLauncher.launch(null) },
+            onAddFolder = { openTreeLauncher.launch(null) },
             onResetFolder = {
-                workFolderUri?.let { releaseSafPermission(context, it) }
+                SafRootStore.getRootUris(context).forEach { releaseSafPermission(context, it) }
                 SafRootStore.clear(context)
                 LogStore.appendSafAction(context, operation = "reset_work_folder", result = "success")
                 workFolderUri = null
+                workFolderCount = 0
                 workFolderMessage = "Work folder reset."
                 executablePlan?.let {
-                    validationResult = PlanValidator.validate(it, hasWorkFolder = false)
+                    validationResult = PlanValidator.validate(
+                        plan = it,
+                        hasWorkFolder = hasFileRoot(workFolderUri, broadStorageGranted),
+                        internetConfirmed = internetConfirmed
+                    )
                 }
                 logs = LogStore.readRecent(context, limit = 50)
             },
             onScanFolder = {
                 val uri = workFolderUri
-                if (uri == null) {
+                if (uri == null && !broadStorageGranted) {
                     workFolderMessage = "Select a work folder first."
                 } else {
-                    runCatching {
-                        val summary = SafFileRepository(context, uri).summarizeFolder()
-                        workFolderMessage = buildString {
-                            appendLine("Files: ${summary.fileCount}")
-                            appendLine("Folders: ${summary.folderCount}")
-                            appendLine("Extensions: ${summary.extensions.entries.joinToString { "${it.key}=${it.value}" }}")
-                            if (summary.firstFiles.isNotEmpty()) {
-                                appendLine("First files:")
-                                append(summary.firstFiles.joinToString("\n"))
+                    coroutineScope.launch {
+                        workFolderScanning = true
+                        workFolderMessage = "Scanning work folder..."
+                        val scanResult = withContext(Dispatchers.IO) {
+                            runCatching {
+                                val summary = if (uri != null) {
+                                    SafFileRepository(context, uri).summarizeFolder()
+                                } else {
+                                    BroadFileRepository().summarizeFolder()
+                                }
+                                val message = buildString {
+                                    appendLine("Files: ${summary.fileCount}")
+                                    appendLine("Folders: ${summary.folderCount}")
+                                    appendLine("Extensions: ${summary.extensions.entries.joinToString { "${it.key}=${it.value}" }}")
+                                    if (summary.firstFiles.isNotEmpty()) {
+                                        appendLine("First files:")
+                                        append(summary.firstFiles.joinToString("\n"))
+                                    }
+                                }
+                                LogStore.appendSafAction(context, operation = "scan_work_folder", result = "success")
+                                message
                             }
                         }
-                        LogStore.appendSafAction(context, operation = "scan_work_folder", result = "success")
-                    }.onFailure {
-                        workFolderMessage = "Folder scan failed: ${it.message ?: it::class.java.simpleName}"
-                        LogStore.appendSafAction(context, operation = "scan_work_folder", result = "failed")
+                        if (scanResult.isSuccess) {
+                            workFolderMessage = scanResult.getOrNull()
+                        } else {
+                            val failure = scanResult.exceptionOrNull()
+                            workFolderMessage = "Folder scan failed: ${failure?.message ?: failure?.javaClass?.simpleName ?: "unknown"}"
+                            withContext(Dispatchers.IO) {
+                                LogStore.appendSafAction(context, operation = "scan_work_folder", result = "failed")
+                            }
+                        }
+                        logs = LogStore.readRecent(context, limit = 50)
+                        workFolderScanning = false
                     }
-                    logs = LogStore.readRecent(context, limit = 50)
                 }
-            }
+            },
+            isScanning = workFolderScanning
         )
 
         AgentCommandCenterCard(
@@ -231,19 +273,37 @@ private fun MainScreen() {
                     executablePlan = null
                     validationResult = null
                     executionResult = null
+                    internetConfirmed = false
                 } else {
                     coroutineScope.launch {
                         commandLoading = true
                         commandMessage = null
                         executionResult = null
                         try {
+                            internetConfirmed = false
                             val settings = AiPrefs.load(context)
                             val provider = AiProviderFactory.create(settings)
                             val plan = provider.generatePlan(commandText)
+                            if (plan.actionType == AiAction.AskClarifyingQuestion) {
+                                commandMessage = plan.explanation
+                                aiPlan = null
+                                executablePlan = null
+                                validationResult = null
+                                internetConfirmed = false
+                                LogStore.appendAiPlanGenerated(
+                                    context = context,
+                                    provider = providerLogName(settings),
+                                    actionType = plan.actionType.wireName,
+                                    riskLevel = plan.riskLevel.wireName
+                                )
+                                logs = LogStore.readRecent(context, limit = 50)
+                                return@launch
+                            }
                             val executable = PlanParser.parse(plan)
                             val validation = PlanValidator.validate(
                                 plan = executable,
-                                hasWorkFolder = workFolderUri != null
+                                hasWorkFolder = hasFileRoot(workFolderUri, broadStorageGranted),
+                                internetConfirmed = internetConfirmed
                             )
                             aiPlan = plan
                             executablePlan = executable
@@ -268,22 +328,57 @@ private fun MainScreen() {
             plan = aiPlan,
             executablePlan = executablePlan,
             validationResult = validationResult,
+            internetConfirmed = internetConfirmed,
+            isExecuting = executionLoading,
             jsonVisible = planJsonVisible,
+            onAllowInternet = {
+                internetConfirmed = true
+                executablePlan?.let {
+                    validationResult = PlanValidator.validate(
+                        plan = it,
+                        hasWorkFolder = hasFileRoot(workFolderUri, broadStorageGranted),
+                        internetConfirmed = true
+                    )
+                }
+            },
+            onCancelInternet = {
+                internetConfirmed = false
+                executionResult = ActionExecutionResult(
+                    successes = emptyList(),
+                    failures = listOf("Internet action cancelled by user."),
+                    warnings = emptyList()
+                )
+            },
             onToggleJson = { planJsonVisible = !planJsonVisible },
             onDiscard = {
                 aiPlan = null
                 executablePlan = null
                 validationResult = null
                 executionResult = null
+                internetConfirmed = false
                 planJsonVisible = false
             },
             onExecute = {
                 val executable = executablePlan ?: return@PlanPreviewCard
-                val validation = PlanValidator.validate(executable, hasWorkFolder = workFolderUri != null)
+                val validation = PlanValidator.validate(
+                    plan = executable,
+                    hasWorkFolder = hasFileRoot(workFolderUri, broadStorageGranted),
+                    internetConfirmed = internetConfirmed
+                )
                 validationResult = validation
                 if (validation.canExecute) {
-                    executionResult = ActionExecutor(context).execute(executable)
-                    logs = LogStore.readRecent(context, limit = 50)
+                    coroutineScope.launch {
+                        executionLoading = true
+                        try {
+                            executionResult = AgentExecutionController(context).execute(
+                                plan = executable,
+                                internetConfirmed = internetConfirmed
+                            )
+                            logs = LogStore.readRecent(context, limit = 50)
+                        } finally {
+                            executionLoading = false
+                        }
+                    }
                 }
             }
         )
@@ -335,6 +430,7 @@ private fun StatusCard(
     guardEnabled: Boolean,
     aiProvider: String,
     workFolder: String,
+    fileAccessMode: String,
     onOpenSettings: () -> Unit,
     onToggleAgent: () -> Unit,
     onToggleGuard: () -> Unit
@@ -354,6 +450,8 @@ private fun StatusCard(
             StatusRow(label = "Guard", value = if (guardEnabled) "Active" else "Disabled")
             StatusRow(label = "API Provider", value = aiProvider.removePrefix("AI Provider: "))
             StatusRow(label = "Work Folder", value = workFolder)
+            StatusRow(label = "File Access Mode", value = fileAccessMode)
+            StatusRow(label = "Internet Gate", value = "Internet actions require confirmation")
             Button(onClick = onToggleAgent) {
                 Text(if (agentEnabled) "Deactivate Nani Agent" else "Activate Nani Agent")
             }
@@ -370,8 +468,12 @@ private fun StatusCard(
 @Composable
 private fun WorkFolderCard(
     rootUri: Uri?,
+    rootCount: Int,
+    broadStorageGranted: Boolean,
     message: String?,
+    isScanning: Boolean,
     onSelectFolder: () -> Unit,
+    onAddFolder: () -> Unit,
     onResetFolder: () -> Unit,
     onScanFolder: () -> Unit
 ) {
@@ -386,6 +488,9 @@ private fun WorkFolderCard(
                 fontWeight = FontWeight.SemiBold
             )
             Text("Aktuell: ${shortUri(rootUri)}")
+            Text("SAF folders selected: $rootCount")
+            Text(BroadStorageAccess.statusText())
+            Text("Nani darf nicht selbst in Settings gehen. Rechte müssen manuell vom Nutzer gesetzt werden.")
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -393,8 +498,11 @@ private fun WorkFolderCard(
                 Button(onClick = onSelectFolder) {
                     Text("Arbeitsordner auswählen")
                 }
-                Button(onClick = onScanFolder, enabled = rootUri != null) {
-                    Text("Dateien listen")
+                Button(onClick = onAddFolder) {
+                    Text("Weitere hinzufügen")
+                }
+                Button(onClick = onScanFolder, enabled = (rootUri != null || broadStorageGranted) && !isScanning) {
+                    Text(if (isScanning) "Scanning..." else "Dateien listen")
                 }
             }
             Button(onClick = onResetFolder, enabled = rootUri != null) {
@@ -456,7 +564,11 @@ private fun PlanPreviewCard(
     plan: AiPlan?,
     executablePlan: ExecutablePlan?,
     validationResult: PlanValidationResult?,
+    internetConfirmed: Boolean,
+    isExecuting: Boolean,
     jsonVisible: Boolean,
+    onAllowInternet: () -> Unit,
+    onCancelInternet: () -> Unit,
     onToggleJson: () -> Unit,
     onDiscard: () -> Unit,
     onExecute: () -> Unit
@@ -477,6 +589,7 @@ private fun PlanPreviewCard(
             Text("Action: ${plan.actionType.wireName}")
             Text("Risk: ${plan.riskLevel.wireName}")
             Text("Requires confirmation: ${plan.requiresConfirmation}")
+            Text("Requires internet confirmation: ${plan.requiresInternetConfirmation}")
             Text(plan.explanation)
             if (plan.actionType == AiAction.Blocked) {
                 Text(
@@ -486,6 +599,14 @@ private fun PlanPreviewCard(
                 )
             }
             OperationList(executablePlan.operations)
+            if (validationResult?.requiresInternetConfirmation == true && !internetConfirmed) {
+                InternetConfirmationCard(
+                    plan = plan,
+                    operations = executablePlan.operations,
+                    onAllowInternet = onAllowInternet,
+                    onCancelInternet = onCancelInternet
+                )
+            }
             validationResult?.let { validation ->
                 if (validation.errors.isNotEmpty()) {
                     Text("Validation errors:", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
@@ -506,8 +627,8 @@ private fun PlanPreviewCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Button(onClick = onExecute, enabled = canExecute) {
-                    Text("Ausführen")
+                Button(onClick = onExecute, enabled = canExecute && !isExecuting) {
+                    Text(if (isExecuting) "Ausführen..." else "Ausführen")
                 }
                 Button(onClick = onDiscard) {
                     Text("Verwerfen")
@@ -515,6 +636,37 @@ private fun PlanPreviewCard(
             }
             if (validationResult?.hasWritingOperations == true) {
                 Text("Schreibende Aktionen werden erst durch Ausführen bestätigt. Originaldateien bleiben erhalten.")
+            }
+        }
+    }
+}
+
+@Composable
+private fun InternetConfirmationCard(
+    plan: AiPlan,
+    operations: List<PlanOperation>,
+    onAllowInternet: () -> Unit,
+    onCancelInternet: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text("Internet Confirmation", fontWeight = FontWeight.SemiBold)
+            Text("Purpose: ${plan.explanation}")
+            operations.filter { it.url != null || it.reason != null }.forEach {
+                Text("Target: ${it.url ?: "unknown"}")
+                Text("Reason: ${it.reason ?: "not specified"}")
+            }
+            Text("Data may leave the device if this action is later implemented.")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(onClick = onAllowInternet) {
+                    Text("Internetaktion erlauben")
+                }
+                Button(onClick = onCancelInternet) {
+                    Text("Abbrechen")
+                }
             }
         }
     }
@@ -761,13 +913,15 @@ private fun SecurityRulesCard() {
                 fontWeight = FontWeight.SemiBold
             )
             Text("No file deletion is implemented.")
-            Text("No real move or rename operations are implemented.")
+            Text("Move/delete-like operations remain blocked. Rename is allowed only inside an approved file root and never overwrites.")
             Text("No device administrator, root, or overlay permissions are requested.")
             Text("Accessibility stays inactive until manually enabled in Android settings.")
             Text("When the agent is active, foreground packages are logged to app-private storage.")
             Text("When the guard is active, Settings and permission-management screens are blocked with Back, then Home.")
-            Text("AI can only produce suggestions and JSON plans.")
-            Text("Only SAF work-folder operations are executable: list, summarize, create folders, copy files.")
+            Text("AI can only produce JSON plans; local validation decides what may execute.")
+            Text("Allowed file actions: list, read, summarize, search, classify, create folders/files, edit text, append text, copy, and rename.")
+            Text("SAF Workspace is recommended. Broad Agent Storage is optional and must be granted manually by the user.")
+            Text("Browser and internet actions require separate confirmation and are not executed blindly.")
             Text("Google Drive, native inference runtime, app install/uninstall, and generic Accessibility automation are not included.")
         }
     }
@@ -823,6 +977,18 @@ private fun shortUri(uri: Uri?): String {
     return if (value.length <= 42) value else value.take(20) + "..." + value.takeLast(18)
 }
 
+private fun hasFileRoot(uri: Uri?, broadStorageGranted: Boolean): Boolean {
+    return uri != null || broadStorageGranted
+}
+
+private fun fileAccessMode(uri: Uri?, broadStorageGranted: Boolean): String {
+    return when {
+        uri != null -> "SAF Workspace"
+        broadStorageGranted -> "Broad Agent Storage granted"
+        else -> "Broad Agent Storage not granted"
+    }
+}
+
 private fun releaseSafPermission(context: Context, uri: Uri) {
     runCatching {
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -833,9 +999,19 @@ private fun releaseSafPermission(context: Context, uri: Uri) {
 private fun operationText(operation: PlanOperation): String {
     return when (operation.op.wireName) {
         "list_files" -> "Dateien im Arbeitsordner listen"
+        "read_file" -> "Datei lesen: ${operation.path.orEmpty()}"
+        "summarize_file" -> "Datei zusammenfassen: ${operation.path.orEmpty()}"
         "summarize_folder" -> "Arbeitsordner zusammenfassen"
+        "search_files" -> "Dateien suchen: ${operation.query.orEmpty()}"
+        "classify_files" -> "Dateien klassifizieren"
         "create_folder" -> "Ordner erstellen: ${operation.path.orEmpty()}"
+        "create_file" -> "Datei erstellen: ${operation.path.orEmpty()}"
+        "edit_text_file" -> "Textdatei bearbeiten: ${operation.path.orEmpty()}"
+        "append_text_file" -> "Text anhängen: ${operation.path.orEmpty()}"
         "copy_file" -> "Datei kopieren: ${operation.from.orEmpty()} -> ${operation.to.orEmpty()}"
+        "rename_file" -> "Datei umbenennen: ${operation.from.orEmpty()} -> ${operation.to.orEmpty()}"
+        "open_url" -> "Internet/URL öffnen: ${operation.url.orEmpty()}"
+        "use_app" -> "App-Aktion: ${operation.reason.orEmpty()}"
         else -> "Nicht unterstützte Operation: ${operation.rawOp}"
     }
 }

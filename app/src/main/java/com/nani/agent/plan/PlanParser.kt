@@ -12,6 +12,7 @@ object PlanParser {
             actionType = plan.actionType,
             explanation = plan.explanation,
             requiresConfirmation = plan.requiresConfirmation,
+            requiresInternetConfirmation = plan.requiresInternetConfirmation,
             riskLevel = plan.riskLevel,
             operations = operations,
             proposedJson = plan.proposedJson
@@ -33,7 +34,11 @@ object PlanParser {
                             rawOp = rawOp,
                             path = operation.optStringOrNull("path"),
                             from = operation.optStringOrNull("from"),
-                            to = operation.optStringOrNull("to")
+                            to = operation.optStringOrNull("to"),
+                            content = operation.optStringOrNull("content"),
+                            query = operation.optStringOrNull("query"),
+                            url = operation.optStringOrNull("url"),
+                            reason = operation.optStringOrNull("reason")
                         )
                     )
                 }
@@ -43,8 +48,7 @@ object PlanParser {
         if (parsedOperations.isNotEmpty()) return parsedOperations
 
         return when (plan.actionType) {
-            AiAction.ListFiles -> listOf(PlanOperation(PlanOperationType.ListFiles, rawOp = "list_files"))
-            AiAction.SummarizeFolder -> listOf(PlanOperation(PlanOperationType.SummarizeFolder, rawOp = "summarize_folder"))
+            AiAction.ReadFiles -> listOf(PlanOperation(PlanOperationType.ListFiles, rawOp = "list_files"))
             else -> emptyList()
         }
     }

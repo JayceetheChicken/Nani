@@ -152,6 +152,7 @@ class ApiAiProvider(
                 ?: return errorPlan("API response used an unknown riskLevel.")
             val explanation = json.getString("explanation")
             val requiresConfirmation = json.getBoolean("requiresConfirmation")
+            val requiresInternetConfirmation = json.optBoolean("requiresInternetConfirmation", false)
             val proposedJsonValue = json.get("proposedJson")
             val proposedJson = when (proposedJsonValue) {
                 is JSONObject -> proposedJsonValue.toString(2)
@@ -166,6 +167,7 @@ class ApiAiProvider(
                 actionType = action,
                 explanation = explanation,
                 requiresConfirmation = requiresConfirmation,
+                requiresInternetConfirmation = requiresInternetConfirmation,
                 riskLevel = risk,
                 proposedJson = proposedJson
             )
@@ -179,6 +181,7 @@ class ApiAiProvider(
             actionType = AiAction.Blocked,
             explanation = "Deleting files is disabled.",
             requiresConfirmation = false,
+            requiresInternetConfirmation = false,
             riskLevel = AiRiskLevel.High,
             proposedJson = safeJson(
                 actionType = AiAction.Blocked,
@@ -193,6 +196,7 @@ class ApiAiProvider(
             actionType = AiAction.AskClarifyingQuestion,
             explanation = explanation,
             requiresConfirmation = false,
+            requiresInternetConfirmation = false,
             riskLevel = AiRiskLevel.Low,
             proposedJson = safeJson(
                 actionType = AiAction.AskClarifyingQuestion,
@@ -209,6 +213,7 @@ class ApiAiProvider(
             .put("diagnostic", message.take(160))
             .put("actionType", actionType.wireName)
             .put("requiresConfirmation", false)
+            .put("requiresInternetConfirmation", false)
             .put("riskLevel", riskLevel.wireName)
             .toString(2)
     }
@@ -227,29 +232,40 @@ class ApiAiProvider(
     }
 
     private val systemPrompt = """
-        You are Nani's planning engine.
+        You are Nani's planning engine for a local Android agent in a separate Agent user profile.
         You return only valid JSON. No markdown. No explanations outside JSON.
         You only propose plans. You do not execute actions and never claim files were changed.
-        Allowed actionType values: list_files, summarize_folder, suggest_copy_files, create_folders, ask_clarifying_question, blocked.
-        Legacy suggest_move_files is not allowed; sorting means safe copy plans where originals remain unchanged.
-        Allowed operation op values inside proposedJson.operations: list_files, create_folder, copy_file, summarize_folder.
-        Never plan delete_file, move_file, rename_file, upload_file, download_file, open_settings, grant_permission, install_app, uninstall_app, Android actions, Accessibility actions, clicks, gestures, or permission changes.
-        If the user asks for dangerous actions, return actionType "blocked", riskLevel "high", requiresConfirmation false.
-        If the user asks to sort files, return actionType "suggest_copy_files", riskLevel "medium", requiresConfirmation true.
+        Allowed actionType values: read_files, write_files, edit_files, organize_files, use_app, use_browser, ask_confirmation, ask_clarifying_question, blocked.
+        Allowed operation op values inside proposedJson.operations: list_files, read_file, summarize_file, summarize_folder, create_folder, create_file, edit_text_file, append_text_file, copy_file, rename_file, search_files, classify_files, open_url.
+        You may plan: read files, analyze files, create files, edit text files, copy files, rename files, create folders, use allowed local apps, read screen, type text, scroll/click in allowed apps.
+        Never plan: delete_file, move_file, wipe_folder, clear_folder, format_storage, Android Settings, permission changes, app install/uninstall, root, device admin, overlay, main user profile access, banking/payment/auth/password-manager automation, blind clicks, or generic Accessibility automation.
+        Browser, web, online services, URL opening, uploads, sharing, messages, and email require requiresInternetConfirmation=true.
+        If Internet is needed, set requiresInternetConfirmation=true, explain why, and include target URL/app/reason when known.
+        If the user asks for delete/settings/permission/app install/root/admin/overlay/main-profile actions, return actionType "blocked", riskLevel "high", requiresConfirmation false, requiresInternetConfirmation false.
+        Sorting means safe copy/rename/create-folder plans where originals remain unchanged.
         If information is missing, return actionType "ask_clarifying_question", riskLevel "low", requiresConfirmation false.
         JSON schema:
         {
-          "actionType": "list_files|summarize_folder|suggest_copy_files|create_folders|ask_clarifying_question|blocked",
+          "actionType": "read_files|write_files|edit_files|organize_files|use_app|use_browser|ask_confirmation|ask_clarifying_question|blocked",
           "explanation": "short user-facing explanation",
           "requiresConfirmation": true,
+          "requiresInternetConfirmation": false,
           "riskLevel": "low|medium|high",
           "proposedJson": {
-            "root": "selected_saf_tree",
             "operations": [
               { "op": "create_folder", "path": "relative/path" },
+              { "op": "create_file", "path": "relative/file.txt", "content": "text" },
+              { "op": "edit_text_file", "path": "relative/file.txt", "content": "replacement text" },
+              { "op": "append_text_file", "path": "relative/file.txt", "content": "text to append" },
               { "op": "copy_file", "from": "relative/source.pdf", "to": "relative/target.pdf" },
+              { "op": "rename_file", "from": "relative/old.txt", "to": "relative/new.txt" },
+              { "op": "read_file", "path": "relative/file.txt" },
+              { "op": "summarize_file", "path": "relative/file.txt" },
               { "op": "list_files" },
-              { "op": "summarize_folder" }
+              { "op": "summarize_folder" },
+              { "op": "search_files", "query": "pdf" },
+              { "op": "classify_files" },
+              { "op": "open_url", "url": "https://example.com", "reason": "Online research" }
             ]
           }
         }

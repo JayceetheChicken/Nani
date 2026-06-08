@@ -1,5 +1,8 @@
 package com.nani.agent
 
+import com.nani.agent.policy.AppPolicy
+import com.nani.agent.policy.AppPolicyDecision
+
 object SecurityPolicy {
     private val deniedPackageFragments = listOf(
         "settings",
@@ -15,6 +18,9 @@ object SecurityPolicy {
     )
 
     fun decisionFor(packageName: String): SecurityDecision {
+        if (AppPolicy.decisionForPackage(packageName) == AppPolicyDecision.Blocked) {
+            return SecurityDecision.Block
+        }
         val normalized = packageName.lowercase()
         if (deniedPackageFragments.any { normalized.contains(it) }) {
             return SecurityDecision.Block

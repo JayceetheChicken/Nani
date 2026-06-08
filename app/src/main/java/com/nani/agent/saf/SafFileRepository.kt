@@ -55,6 +55,60 @@ class SafFileRepository(
         return "Created or found folder: ${folder.name ?: path}"
     }
 
+    fun readFile(path: String): String {
+        val file = findRelativeFile(path) ?: error("File not found: $path")
+        if (!file.isFile) error("Path is not a file: $path")
+        if (file.length() > MAX_TEXT_PREVIEW_BYTES) {
+            return "File is larger than 1 MB preview limit. Size: ${file.length()} bytes."
+        }
+        val type = file.type.orEmpty()
+        if (type.isNotBlank() && !type.startsWith("text/") && !path.looksTextLike()) {
+            return "Binary or unknown file type. Showing metadata only: ${file.name}, ${file.length()} bytes."
+        }
+        val text = context.contentResolver.openInputStream(file.uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+            ?: error("Could not read file: $path")
+        return text.take(MAX_TEXT_RESULT_CHARS)
+    }
+
+    fun summarizeFile(path: String): String {
+        val file = findRelativeFile(path) ?: error("File not found: $path")
+        return "File: ${file.name ?: path}\nSize: ${file.length()} bytes\nType: ${file.type ?: "unknown"}"
+    }
+
+    fun createFile(path: String, content: String): String {
+        val folderPath = path.substringBeforeLast('/', missingDelimiterValue = "")
+        val requestedName = path.substringAfterLast('/')
+        if (requestedName.isBlank()) error("File name is missing: $path")
+        val folder = if (folderPath.isBlank()) root else ensureFolder(folderPath)
+        val targetName = uniqueName(folder, requestedName)
+        val target = folder.createFile(mimeTypeForName(targetName), targetName)
+            ?: error("Could not create file: $path")
+        context.contentResolver.openOutputStream(target.uri, "wt").use { output ->
+            output ?: error("Could not write file: $path")
+            output.write(content.toByteArray(Charsets.UTF_8))
+        }
+        return "Created file: ${if (folderPath.isBlank()) targetName else "$folderPath/$targetName"}"
+    }
+
+    fun editTextFile(path: String, content: String): String {
+        val file = findRelativeFile(path) ?: error("File not found: $path")
+        if (!file.isFile) error("Path is not a file: $path")
+        if (file.length() > MAX_TEXT_PREVIEW_BYTES) error("File is larger than 1 MB edit limit: $path")
+        if (!file.type.orEmpty().startsWith("text/") && !path.looksTextLike()) {
+            error("Refusing to edit non-text file: $path")
+        }
+        context.contentResolver.openOutputStream(file.uri, "wt").use { output ->
+            output ?: error("Could not write file: $path")
+            output.write(content.toByteArray(Charsets.UTF_8))
+        }
+        return "Edited text file: $path"
+    }
+
+    fun appendTextFile(path: String, content: String): String {
+        val current = readFile(path)
+        return editTextFile(path, current + content)
+    }
+
     fun copyFile(from: String, to: String): String {
         val source = findRelativeFile(from)
             ?: error("Source file not found: $from")
@@ -83,6 +137,35 @@ class SafFileRepository(
         }
 
         return "Copied $from to ${if (targetFolderPath.isBlank()) targetName else "$targetFolderPath/$targetName"}"
+    }
+
+    fun renameFile(from: String, to: String): String {
+        val source = findRelativeFile(from) ?: error("Source not found: $from")
+        val sourceFolderPath = from.substringBeforeLast('/', missingDelimiterValue = "")
+        val targetFolderPath = to.substringBeforeLast('/', missingDelimiterValue = "")
+        if (sourceFolderPath != targetFolderPath) {
+            error("Rename cannot move files between folders.")
+        }
+        val targetName = to.substringAfterLast('/')
+        if (targetName.isBlank()) error("Target name is missing: $to")
+        val folder = if (sourceFolderPath.isBlank()) root else ensureFolder(sourceFolderPath)
+        if (folder.findFile(targetName) != null) error("Target already exists: $to")
+        if (!source.renameTo(targetName)) error("Rename failed: $from")
+        return "Renamed $from to $to"
+    }
+
+    fun searchFiles(query: String, limit: Int = 50): List<String> {
+        val normalized = query.lowercase()
+        return listFiles(limit = 500)
+            .filter { it.lowercase().contains(normalized) }
+            .take(limit)
+    }
+
+    fun classifyFiles(limit: Int = 50): List<String> {
+        return listFiles(limit = limit).map { path ->
+            val extension = path.substringAfterLast('.', missingDelimiterValue = "").ifBlank { "folder-or-unknown" }
+            "$path -> $extension"
+        }
     }
 
     private fun collectEntries(folder: DocumentFile, prefix: String, result: MutableList<String>, limit: Int) {
@@ -131,7 +214,25 @@ class SafFileRepository(
 
     companion object {
         private const val MAX_COPY_BYTES = 20L * 1024L * 1024L
+        private const val MAX_TEXT_PREVIEW_BYTES = 1L * 1024L * 1024L
+        private const val MAX_TEXT_RESULT_CHARS = 32_000
     }
+}
+
+private fun String.looksTextLike(): Boolean {
+    val lower = lowercase()
+    return lower.endsWith(".txt") ||
+        lower.endsWith(".md") ||
+        lower.endsWith(".csv") ||
+        lower.endsWith(".json") ||
+        lower.endsWith(".xml") ||
+        lower.endsWith(".html") ||
+        lower.endsWith(".kt") ||
+        lower.endsWith(".java")
+}
+
+private fun mimeTypeForName(name: String): String {
+    return if (name.looksTextLike()) "text/plain" else "application/octet-stream"
 }
 
 data class FolderSummary(
