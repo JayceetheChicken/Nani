@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.nani.agent.agent.NaniAccessibilityService
+import com.nani.agent.ai.AiAction
 import com.nani.agent.ai.AiPlan
 import com.nani.agent.ai.AiPrefs
 import com.nani.agent.ai.AiProviderFactory
@@ -73,6 +74,10 @@ private fun MainScreen() {
     var aiSettings by remember { mutableStateOf(AiPrefs.load(context)) }
     var aiTestPlan by remember { mutableStateOf<AiPlan?>(null) }
     var aiTestLoading by remember { mutableStateOf(false) }
+    var commandText by remember { mutableStateOf("") }
+    var commandPlan by remember { mutableStateOf<AiPlan?>(null) }
+    var commandMessage by remember { mutableStateOf<String?>(null) }
+    var commandLoading by remember { mutableStateOf(false) }
     var logs by remember { mutableStateOf(LogStore.readRecent(context, limit = 40)) }
     val coroutineScope = rememberCoroutineScope()
 
@@ -128,6 +133,50 @@ private fun MainScreen() {
             WarningCard("Nani Guard is disabled. Nani is logging only and will not block protected screens.")
         }
 
+        AgentCommandCenterCard(
+            command = commandText,
+            plan = commandPlan,
+            message = commandMessage,
+            isGenerating = commandLoading,
+            onCommandChanged = {
+                commandText = it
+                if (commandMessage == "Please enter a command first.") {
+                    commandMessage = null
+                }
+            },
+            onGeneratePlan = {
+                if (commandText.isBlank()) {
+                    commandMessage = "Please enter a command first."
+                    commandPlan = null
+                } else {
+                    coroutineScope.launch {
+                        commandLoading = true
+                        commandMessage = null
+                        val userCommand = commandText
+                        try {
+                            val currentSettings = AiPrefs.load(context)
+                            val provider = AiProviderFactory.create(currentSettings)
+                            val plan = provider.generatePlan(userCommand)
+                            commandPlan = plan
+                            LogStore.appendAiPlanGenerated(
+                                context = context,
+                                provider = providerLogName(currentSettings),
+                                actionType = plan.actionType.wireName,
+                                riskLevel = plan.riskLevel.wireName
+                            )
+                            logs = LogStore.readRecent(context, limit = 40)
+                        } finally {
+                            commandLoading = false
+                        }
+                    }
+                }
+            },
+            onClearPlan = {
+                commandPlan = null
+                commandMessage = null
+            }
+        )
+
         AiSettingsCard(
             settings = aiSettings,
             testPlan = aiTestPlan,
@@ -163,6 +212,63 @@ private fun MainScreen() {
         SecurityRulesCard()
 
         LogsCard(logs = logs)
+    }
+}
+
+@Composable
+private fun AgentCommandCenterCard(
+    command: String,
+    plan: AiPlan?,
+    message: String?,
+    isGenerating: Boolean,
+    onCommandChanged: (String) -> Unit,
+    onGeneratePlan: () -> Unit,
+    onClearPlan: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "Agent Command Center",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            OutlinedTextField(
+                value = command,
+                onValueChange = onCommandChanged,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Command for Nani") },
+                placeholder = { Text("Sortiere meine PDFs für Schule") },
+                minLines = 3,
+                maxLines = 6
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(onClick = onGeneratePlan, enabled = !isGenerating) {
+                    Text(if (isGenerating) "Generating..." else "Generate Plan")
+                }
+                Button(onClick = onClearPlan, enabled = !isGenerating && plan != null) {
+                    Text("Clear Plan")
+                }
+            }
+            if (isGenerating) {
+                Text("Generating safe JSON plan...")
+            }
+            if (message != null) {
+                Text(
+                    text = message,
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            if (plan != null) {
+                PlanPreview(plan = plan, showConfirmationControls = true)
+            }
+        }
     }
 }
 
@@ -253,23 +359,47 @@ private fun AiSettingsCard(
                 Text("Testing selected AI provider...")
             }
             if (testPlan != null) {
-                Text(
-                    text = "Test Result",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text("Action: ${testPlan.actionType.wireName}")
-                Text("Risk: ${testPlan.riskLevel.wireName}")
-                Text("Requires confirmation: ${testPlan.requiresConfirmation}")
-                Text(testPlan.explanation)
-                Text(
-                    text = "Proposed JSON",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(text = testPlan.proposedJson, style = MaterialTheme.typography.bodySmall)
+                PlanPreview(plan = testPlan, showConfirmationControls = false)
             }
         }
+    }
+}
+
+@Composable
+private fun PlanPreview(plan: AiPlan, showConfirmationControls: Boolean) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "Plan Preview",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text("Action: ${plan.actionType.wireName}")
+        Text("Risk: ${plan.riskLevel.wireName}")
+        Text("Requires confirmation: ${plan.requiresConfirmation}")
+        Text(plan.explanation)
+        if (plan.actionType == AiAction.Blocked) {
+            Text(
+                text = "This action is blocked by Nani safety rules.",
+                color = MaterialTheme.colorScheme.error,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+        if (showConfirmationControls && plan.requiresConfirmation) {
+            Button(onClick = {}, enabled = false) {
+                Text("Confirm Action - Not implemented yet")
+            }
+            Text("Real file actions are not implemented yet. Nani can only generate safe JSON plans.")
+        }
+        Text(
+            text = "Proposed JSON",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            text = plan.proposedJson,
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.bodySmall
+        )
     }
 }
 
