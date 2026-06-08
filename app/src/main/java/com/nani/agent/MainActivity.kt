@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -26,14 +27,21 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.nani.agent.agent.NaniAccessibilityService
+import com.nani.agent.ai.AiPlan
+import com.nani.agent.ai.AiPrefs
+import com.nani.agent.ai.AiProviderFactory
+import com.nani.agent.ai.AiSettings
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,7 +70,10 @@ private fun MainScreen() {
     var accessibilityEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
     var agentEnabled by remember { mutableStateOf(AgentPrefs.isAgentEnabled(context)) }
     var guardEnabled by remember { mutableStateOf(AgentPrefs.isGuardEnabled(context)) }
+    var aiSettings by remember { mutableStateOf(AiPrefs.load(context)) }
+    var aiTestPlan by remember { mutableStateOf<AiPlan?>(null) }
     var logs by remember { mutableStateOf(LogStore.readRecent(context, limit = 40)) }
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -116,9 +127,152 @@ private fun MainScreen() {
             WarningCard("Nani Guard is disabled. Nani is logging only and will not block protected screens.")
         }
 
+        AiSettingsCard(
+            settings = aiSettings,
+            testPlan = aiTestPlan,
+            onSettingsChanged = { aiSettings = it },
+            onSave = {
+                AiPrefs.save(context, aiSettings)
+                aiSettings = AiPrefs.load(context)
+            },
+            onTest = {
+                coroutineScope.launch {
+                    val savedSettings = aiSettings
+                    AiPrefs.save(context, savedSettings)
+                    val provider = AiProviderFactory.create(savedSettings)
+                    val plan = provider.generatePlan("Sortiere meine PDFs fÃ¼r Schule")
+                    aiTestPlan = plan
+                    LogStore.appendAiTest(
+                        context = context,
+                        provider = providerLogName(savedSettings),
+                        actionType = plan.actionType.wireName,
+                        riskLevel = plan.riskLevel.wireName
+                    )
+                    logs = LogStore.readRecent(context, limit = 40)
+                }
+            }
+        )
+
         SecurityRulesCard()
 
         LogsCard(logs = logs)
+    }
+}
+
+@Composable
+private fun AiSettingsCard(
+    settings: AiSettings,
+    testPlan: AiPlan?,
+    onSettingsChanged: (AiSettings) -> Unit,
+    onSave: () -> Unit,
+    onTest: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "AI Settings",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = AiProviderFactory.providerStatus(settings),
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            ProviderOption(
+                label = "Local Gemma 4 E2B",
+                selected = settings.providerType == AiPrefs.PROVIDER_LOCAL_GEMMA_4_E2B,
+                onClick = {
+                    onSettingsChanged(
+                        settings.copy(
+                            providerType = AiPrefs.PROVIDER_LOCAL_GEMMA_4_E2B,
+                            modelName = AiPrefs.DEFAULT_LOCAL_MODEL_NAME
+                        )
+                    )
+                }
+            )
+            ProviderOption(
+                label = "OpenAI Compatible API",
+                selected = settings.providerType == AiPrefs.PROVIDER_OPENAI_COMPATIBLE_API,
+                onClick = {
+                    onSettingsChanged(settings.copy(providerType = AiPrefs.PROVIDER_OPENAI_COMPATIBLE_API))
+                }
+            )
+            ProviderOption(
+                label = "Custom API",
+                selected = settings.providerType == AiPrefs.PROVIDER_CUSTOM_API,
+                onClick = {
+                    onSettingsChanged(settings.copy(providerType = AiPrefs.PROVIDER_CUSTOM_API))
+                }
+            )
+            OutlinedTextField(
+                value = settings.apiBaseUrl,
+                onValueChange = { onSettingsChanged(settings.copy(apiBaseUrl = it)) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("API Base URL") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = settings.modelName,
+                onValueChange = { onSettingsChanged(settings.copy(modelName = it)) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Model Name") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = settings.apiKey,
+                onValueChange = { onSettingsChanged(settings.copy(apiKey = it)) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("API Key") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation()
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(onClick = onSave) {
+                    Text("Save AI Settings")
+                }
+                Button(onClick = onTest) {
+                    Text("Test AI")
+                }
+            }
+            if (testPlan != null) {
+                Text(
+                    text = "Test Result",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text("Action: ${testPlan.actionType.wireName}")
+                Text("Risk: ${testPlan.riskLevel.wireName}")
+                Text("Requires confirmation: ${testPlan.requiresConfirmation}")
+                Text(testPlan.explanation)
+                Text(
+                    text = "Proposed JSON",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(text = testPlan.proposedJson, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProviderOption(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Button(onClick = onClick) {
+        Text(label)
+    }
+    if (selected) {
+        Text(text = "Selected: $label", style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -198,8 +352,10 @@ private fun SecurityRulesCard() {
             Text("Accessibility stays inactive until manually enabled in Android settings.")
             Text("When the agent is active, foreground packages are logged to app-private storage.")
             Text("When the guard is active, Settings and permission-management screens are blocked with Back, then Home.")
+            Text("AI can only produce suggestions and JSON plans.")
+            Text("AI never executes Android actions or file operations.")
             Text("Unknown apps are observe-only. No arbitrary app automation is implemented.")
-            Text("No Google Drive API and no AI model are included.")
+            Text("No Google Drive API, native inference runtime, or local fallback model is included.")
         }
     }
 }
@@ -237,4 +393,13 @@ private fun isAccessibilityServiceEnabled(context: Context): Boolean {
     val splitter = TextUtils.SimpleStringSplitter(':')
     splitter.setString(enabledServices)
     return splitter.any { it.equals(expected, ignoreCase = true) }
+}
+
+private fun providerLogName(settings: AiSettings): String {
+    return when (settings.providerType) {
+        AiPrefs.PROVIDER_LOCAL_GEMMA_4_E2B -> "local_gemma_4_e2b"
+        AiPrefs.PROVIDER_OPENAI_COMPATIBLE_API -> "openai_compatible_api"
+        AiPrefs.PROVIDER_CUSTOM_API -> "custom_api"
+        else -> "unknown"
+    }
 }

@@ -20,6 +20,10 @@ object LogStore {
         appendLine(context, "${Instant.now()} control_change=$control enabled=$enabled")
     }
 
+    fun appendAiTest(context: Context, provider: String, actionType: String, riskLevel: String) {
+        appendLine(context, "${Instant.now()} ai_test provider=$provider actionType=$actionType riskLevel=$riskLevel")
+    }
+
     fun readRecent(context: Context, limit: Int = 80): List<String> {
         val file = logFile(context)
         if (!file.exists()) return emptyList()
