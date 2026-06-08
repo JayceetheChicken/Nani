@@ -18,7 +18,15 @@ class ApiAiProvider(
 
             try {
                 val endpoint = buildChatCompletionsEndpoint(settings.apiBaseUrl)
-                val response = postChatCompletion(endpoint, userCommand)
+                val response = try {
+                    postChatCompletion(endpoint, userCommand, includeResponseFormat = true)
+                } catch (exception: ApiHttpException) {
+                    if (settings.providerType != AiPrefs.PROVIDER_DEEPSEEK_API && exception.code == 400) {
+                        postChatCompletion(endpoint, userCommand, includeResponseFormat = false)
+                    } else {
+                        throw exception
+                    }
+                }
                 val parsedPlan = parseChatCompletionResponse(response)
                 if (isDeleteRequest(userCommand) && parsedPlan.actionType != AiAction.Blocked) {
                     blockedDeletePlan()
@@ -49,7 +57,11 @@ class ApiAiProvider(
         }
     }
 
-    private fun postChatCompletion(endpoint: String, userCommand: String): String {
+    private fun postChatCompletion(
+        endpoint: String,
+        userCommand: String,
+        includeResponseFormat: Boolean
+    ): String {
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 20_000
@@ -60,23 +72,19 @@ class ApiAiProvider(
         }
 
         return try {
-            val requestBody = JSONObject()
-                .put("model", settings.modelName)
-                .put(
-                    "messages",
-                    JSONArray()
-                        .put(JSONObject().put("role", "system").put("content", systemPrompt))
-                        .put(JSONObject().put("role", "user").put("content", userCommand))
-                )
-                .put("temperature", 0.1)
-
+            val requestBody = buildRequestBody(userCommand, includeResponseFormat)
             connection.outputStream.use { output ->
                 output.write(requestBody.toString().toByteArray(Charsets.UTF_8))
             }
 
             val responseCode = connection.responseCode
             if (responseCode !in 200..299) {
-                throw IOException("HTTP $responseCode")
+                val safeBody = connection.errorStream
+                    ?.bufferedReader(Charsets.UTF_8)
+                    ?.use { it.readText() }
+                    ?.take(220)
+                    .orEmpty()
+                throw ApiHttpException(responseCode, safeBody)
             }
 
             connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
@@ -85,33 +93,72 @@ class ApiAiProvider(
         }
     }
 
+    private fun buildRequestBody(userCommand: String, includeResponseFormat: Boolean): JSONObject {
+        val body = JSONObject()
+            .put("model", settings.modelName)
+            .put(
+                "messages",
+                JSONArray()
+                    .put(JSONObject().put("role", "system").put("content", systemPrompt))
+                    .put(JSONObject().put("role", "user").put("content", userCommand))
+            )
+            .put("temperature", 0.1)
+
+        if (includeResponseFormat) {
+            body.put("response_format", JSONObject().put("type", "json_object"))
+        }
+        if (settings.providerType == AiPrefs.PROVIDER_DEEPSEEK_API) {
+            body.put("thinking", JSONObject().put("type", "disabled"))
+        }
+        return body
+    }
+
     private fun parseChatCompletionResponse(responseBody: String): AiPlan {
         return try {
-            val content = JSONObject(responseBody)
+            val choice = JSONObject(responseBody)
                 .getJSONArray("choices")
                 .getJSONObject(0)
+            val finishReason = choice.optString("finish_reason", "")
+            if (finishReason == "length") {
+                return errorPlan("API response was cut off before valid JSON was complete.")
+            }
+
+            val content = choice
                 .getJSONObject("message")
                 .getString("content")
-
-            parsePlanContent(content)
+            parsePlanContent(extractJsonContent(content))
         } catch (exception: Exception) {
             errorPlan("API response was not valid JSON.")
         }
+    }
+
+    private fun extractJsonContent(content: String): String {
+        val trimmed = content.trim()
+        if (!trimmed.startsWith("```")) return trimmed
+
+        val withoutFence = trimmed
+            .removePrefix("```json")
+            .removePrefix("```")
+            .trim()
+        return withoutFence.substringBeforeLast("```").trim()
     }
 
     private fun parsePlanContent(content: String): AiPlan {
         return try {
             val json = JSONObject(content)
             val action = AiAction.fromWireName(json.getString("actionType"))
-                ?: return errorPlan("API response was not valid JSON.")
+                ?: return errorPlan("API response used an unknown actionType.")
             val risk = AiRiskLevel.fromWireName(json.getString("riskLevel"))
-                ?: return errorPlan("API response was not valid JSON.")
+                ?: return errorPlan("API response used an unknown riskLevel.")
             val explanation = json.getString("explanation")
             val requiresConfirmation = json.getBoolean("requiresConfirmation")
             val proposedJsonValue = json.get("proposedJson")
             val proposedJson = when (proposedJsonValue) {
                 is JSONObject -> proposedJsonValue.toString(2)
-                is JSONArray -> proposedJsonValue.toString(2)
+                is JSONArray -> JSONObject()
+                    .put("root", "selected_saf_tree")
+                    .put("operations", proposedJsonValue)
+                    .toString(2)
                 else -> proposedJsonValue.toString()
             }
 
@@ -157,18 +204,19 @@ class ApiAiProvider(
 
     private fun safeJson(actionType: AiAction, riskLevel: AiRiskLevel, message: String): String {
         return JSONObject()
+            .put("root", "selected_saf_tree")
+            .put("operations", JSONArray())
+            .put("diagnostic", message.take(160))
             .put("actionType", actionType.wireName)
             .put("requiresConfirmation", false)
             .put("riskLevel", riskLevel.wireName)
-            .put("error", message)
-            .put("executesActions", false)
-            .put("accessesFiles", false)
             .toString(2)
     }
 
     private fun safeError(exception: Exception): String {
         return when (exception) {
-            is IOException -> exception.message?.take(80) ?: "network_error"
+            is ApiHttpException -> "HTTP ${exception.code}: ${exception.safeBody.take(160)}"
+            is IOException -> exception.message?.take(120) ?: "network_error"
             else -> exception::class.java.simpleName
         }
     }
@@ -180,19 +228,35 @@ class ApiAiProvider(
 
     private val systemPrompt = """
         You are Nani's planning engine.
-        You must return ONLY valid JSON.
-        No markdown.
-        No explanations outside JSON.
-        You may only propose plans.
-        You must not execute actions.
-        You must not claim that files were changed.
-        You must never move, delete, copy, rename, upload, download, or modify files.
-        You must never execute Android actions or Accessibility actions.
-        Allowed actionType values: list_files, suggest_move_files, summarize_folder, ask_clarifying_question, blocked.
-        The JSON must contain: actionType, explanation, requiresConfirmation, riskLevel, proposedJson.
-        riskLevel must be one of: low, medium, high.
-        If the user asks to delete files, return actionType "blocked", riskLevel "high", requiresConfirmation false.
-        If the user asks to move/sort files, return actionType "suggest_move_files", riskLevel "medium", requiresConfirmation true.
-        If unsure, return actionType "ask_clarifying_question", riskLevel "low", requiresConfirmation false.
+        You return only valid JSON. No markdown. No explanations outside JSON.
+        You only propose plans. You do not execute actions and never claim files were changed.
+        Allowed actionType values: list_files, summarize_folder, suggest_copy_files, create_folders, ask_clarifying_question, blocked.
+        Legacy suggest_move_files is not allowed; sorting means safe copy plans where originals remain unchanged.
+        Allowed operation op values inside proposedJson.operations: list_files, create_folder, copy_file, summarize_folder.
+        Never plan delete_file, move_file, rename_file, upload_file, download_file, open_settings, grant_permission, install_app, uninstall_app, Android actions, Accessibility actions, clicks, gestures, or permission changes.
+        If the user asks for dangerous actions, return actionType "blocked", riskLevel "high", requiresConfirmation false.
+        If the user asks to sort files, return actionType "suggest_copy_files", riskLevel "medium", requiresConfirmation true.
+        If information is missing, return actionType "ask_clarifying_question", riskLevel "low", requiresConfirmation false.
+        JSON schema:
+        {
+          "actionType": "list_files|summarize_folder|suggest_copy_files|create_folders|ask_clarifying_question|blocked",
+          "explanation": "short user-facing explanation",
+          "requiresConfirmation": true,
+          "riskLevel": "low|medium|high",
+          "proposedJson": {
+            "root": "selected_saf_tree",
+            "operations": [
+              { "op": "create_folder", "path": "relative/path" },
+              { "op": "copy_file", "from": "relative/source.pdf", "to": "relative/target.pdf" },
+              { "op": "list_files" },
+              { "op": "summarize_folder" }
+            ]
+          }
+        }
     """.trimIndent()
 }
+
+private class ApiHttpException(
+    val code: Int,
+    val safeBody: String
+) : IOException("HTTP $code")

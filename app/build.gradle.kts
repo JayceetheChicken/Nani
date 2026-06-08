@@ -30,6 +30,7 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.documentfile:documentfile:1.1.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

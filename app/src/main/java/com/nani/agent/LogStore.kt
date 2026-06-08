@@ -28,6 +28,10 @@ object LogStore {
         appendLine(context, "${Instant.now()} ai_plan_generated provider=$provider actionType=$actionType riskLevel=$riskLevel")
     }
 
+    fun appendSafAction(context: Context, operation: String, result: String) {
+        appendLine(context, "${Instant.now()} saf_action operation=$operation result=$result")
+    }
+
     fun readRecent(context: Context, limit: Int = 80): List<String> {
         val file = logFile(context)
         if (!file.exists()) return emptyList()

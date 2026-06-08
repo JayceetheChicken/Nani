@@ -10,13 +10,15 @@ data class AiPlan(
 
 enum class AiAction(val wireName: String) {
     ListFiles("list_files"),
-    SuggestMoveFiles("suggest_move_files"),
+    SuggestCopyFiles("suggest_copy_files"),
+    CreateFolders("create_folders"),
     SummarizeFolder("summarize_folder"),
     AskClarifyingQuestion("ask_clarifying_question"),
     Blocked("blocked");
 
     companion object {
         fun fromWireName(value: String): AiAction? {
+            if (value == "suggest_move_files") return SuggestCopyFiles
             return entries.firstOrNull { it.wireName == value }
         }
     }
