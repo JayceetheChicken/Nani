@@ -116,7 +116,7 @@ class SafFileRepository(
 
         val sourceLength = source.length()
         if (sourceLength > MAX_COPY_BYTES) {
-            error("File is larger than 20 MB MVP copy limit: $from")
+            error("File is larger than the 500 MB SAF copy safety limit: $from")
         }
 
         val targetFolderPath = to.substringBeforeLast('/', missingDelimiterValue = "")
@@ -213,7 +213,7 @@ class SafFileRepository(
             .filter { it.isNotBlank() }
             .ifEmpty { listOf("jpg", "jpeg", "png") }
             .toSet()
-        val prefix = targetFolderPrefix.ifBlank { "W" }
+        val prefix = targetFolderPrefix.trim().trimEnd('-').ifBlank { "W" }
         val targetFolderPattern = Regex("^${Regex.escape(prefix)}-\\d+/")
         val files = listFileEntries()
             .asSequence()
@@ -293,7 +293,7 @@ class SafFileRepository(
     }
 
     companion object {
-        private const val MAX_COPY_BYTES = 20L * 1024L * 1024L
+        private const val MAX_COPY_BYTES = 500L * 1024L * 1024L
         private const val MAX_TEXT_PREVIEW_BYTES = 1L * 1024L * 1024L
         private const val MAX_TEXT_RESULT_CHARS = 32_000
     }

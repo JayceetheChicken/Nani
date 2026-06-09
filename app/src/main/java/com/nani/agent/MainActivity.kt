@@ -816,8 +816,8 @@ private fun AgentFullAccessSetupCard(
             )
             SetupRow(
                 title = "Screen Capture / MediaProjection",
-                status = if (mediaProjectionGranted) "Granted for this session" else "Not granted",
-                description = "Permission request is implemented. Screenshot capture and OCR are not wired into the executor yet.",
+                status = if (mediaProjectionGranted) "Permission prepared for this session; OCR not implemented yet" else "Not granted; OCR not implemented yet",
+                description = "MediaProjection permission can be requested, but screenshot capture and OCR are not wired into the executor yet.",
                 buttonText = "Request Screen Capture",
                 onClick = onRequestMediaProjection
             )
@@ -1519,9 +1519,11 @@ private fun SecurityRulesCard() {
             Text("When the guard is active, Settings and permission-management screens are blocked with Back, then Home.")
             Text("AI can only produce JSON plans; local validation decides what may execute.")
             Text("Allowed file actions: list, read, summarize, search, classify, create folders/files, edit text, append text, copy, and rename.")
+            Text("SAF copy operations use a visible 500 MB per-file safety limit and keep originals.")
             Text("SAF Workspace is recommended. Broad Agent Storage is optional and must be granted manually by the user.")
+            Text("Allowed UI actions are constrained to validated plans such as read_screen, tap_node, set_text, scroll, press_back, and open_url.")
             Text("Browser and internet actions require separate confirmation and are not executed blindly.")
-            Text("Google Drive, native inference runtime, app install/uninstall, and generic Accessibility automation are not included.")
+            Text("Google Drive, native inference runtime, app install/uninstall, deletion, and unrestricted Accessibility automation are not included.")
         }
     }
 }

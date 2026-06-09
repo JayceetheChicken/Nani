@@ -143,8 +143,8 @@ object PlanValidator {
             validateOperation(index, operation, errors)
         }
 
-        if (plan.operations.any { it.op == PlanOperationType.CopyFile }) {
-            warnings += "Copy limit is 20 MB per file when size can be checked."
+        if (plan.operations.any { it.op == PlanOperationType.CopyFile || it.op == PlanOperationType.BatchGroupFiles }) {
+            warnings += "SAF copy safety limit is 500 MB per file when size can be checked."
         }
         if (plan.operations.size > 20) {
             warnings += "This plan affects many operations and should be reviewed carefully."
