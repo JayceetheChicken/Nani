@@ -30,7 +30,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,9 +39,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.nani.agent.agent.NaniAccessibilityService
 import com.nani.agent.agentloop.AgentLoopController
 import com.nani.agent.agentloop.AgentLoopState
@@ -106,6 +109,7 @@ fun NaniApp() {
 @Composable
 private fun MainScreen() {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
 
     var accessibilityEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled(context)) }
@@ -140,6 +144,7 @@ private fun MainScreen() {
     var screenMessage by remember { mutableStateOf<String?>(null) }
     var agentLoopState by remember { mutableStateOf(AgentLoopState()) }
     var agentLoopLoading by remember { mutableStateOf(false) }
+    val agentLoopRunStateRef = remember { AtomicReference(ExecutionState.Idle) }
     var memoryText by remember { mutableStateOf("") }
     var memories by remember { mutableStateOf(MemoryStore.listMemories(context)) }
     var memoryMessage by remember { mutableStateOf<String?>(null) }
@@ -148,6 +153,19 @@ private fun MainScreen() {
     var usageAccessEnabled by remember { mutableStateOf(isUsageAccessEnabled(context)) }
     var ignoringBatteryOptimizations by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
     var logs by remember { mutableStateOf(LogStore.readRecent(context, limit = 50)) }
+
+    fun refreshSetupStatus() {
+        accessibilityEnabled = isAccessibilityServiceEnabled(context)
+        agentEnabled = AgentPrefs.isAgentEnabled(context)
+        guardEnabled = AgentPrefs.isGuardEnabled(context)
+        workFolderUri = SafRootStore.getRootUri(context)
+        workFolderCount = SafRootStore.getRootUris(context).size
+        broadStorageGranted = BroadStorageAccess.isGranted()
+        notificationAccessEnabled = isNotificationAccessEnabled(context)
+        usageAccessEnabled = isUsageAccessEnabled(context)
+        ignoringBatteryOptimizations = isIgnoringBatteryOptimizations(context)
+        logs = LogStore.readRecent(context, limit = 50)
+    }
 
     val openTreeLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -177,18 +195,15 @@ private fun MainScreen() {
         mediaProjectionGranted = result.resultCode == android.app.Activity.RESULT_OK && result.data != null
     }
 
-    LaunchedEffect(Unit) {
-        while (true) {
-            accessibilityEnabled = isAccessibilityServiceEnabled(context)
-            agentEnabled = AgentPrefs.isAgentEnabled(context)
-            guardEnabled = AgentPrefs.isGuardEnabled(context)
-            broadStorageGranted = BroadStorageAccess.isGranted()
-            screenSnapshot = ScreenStateStore.latest()
-            notificationAccessEnabled = isNotificationAccessEnabled(context)
-            usageAccessEnabled = isUsageAccessEnabled(context)
-            ignoringBatteryOptimizations = isIgnoringBatteryOptimizations(context)
-            logs = LogStore.readRecent(context, limit = 50)
-            delay(1_000)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                refreshSetupStatus()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
@@ -265,6 +280,9 @@ private fun MainScreen() {
             },
             onRequestBatteryOptimizationIgnore = {
                 requestIgnoreBatteryOptimizations(context)
+            },
+            onRefreshStatus = {
+                refreshSetupStatus()
             }
         )
 
@@ -369,16 +387,22 @@ private fun MainScreen() {
                     coroutineScope.launch {
                         agentLoopLoading = true
                         commandMessage = null
+                        agentLoopRunStateRef.set(ExecutionState.Running)
                         agentLoopState = AgentLoopState(goal = commandText, running = true)
                         try {
-                            agentLoopState = AgentLoopController(context).runNextStep(
-                                previous = agentLoopState,
+                            runAgentLoopUntilStop(
+                                context = context,
+                                initialState = agentLoopState,
                                 goal = commandText,
                                 internetConfirmed = internetConfirmed,
-                                finalSubmitConfirmed = finalSubmitConfirmed
+                                finalSubmitConfirmed = finalSubmitConfirmed,
+                                stateRef = agentLoopRunStateRef,
+                                onState = { agentLoopState = it },
+                                onAfterStep = {
+                                    screenSnapshot = ScreenStateStore.latest()
+                                    logs = LogStore.readRecent(context, limit = 50)
+                                }
                             )
-                            screenSnapshot = ScreenStateStore.latest()
-                            logs = LogStore.readRecent(context, limit = 50)
                         } finally {
                             agentLoopLoading = false
                         }
@@ -461,25 +485,33 @@ private fun MainScreen() {
                 val goal = agentLoopState.goal.ifBlank { commandText }
                 coroutineScope.launch {
                     agentLoopLoading = true
+                    agentLoopRunStateRef.set(ExecutionState.Running)
                     try {
-                        agentLoopState = AgentLoopController(context).runNextStep(
-                            previous = agentLoopState.copy(running = true, paused = false, stopped = false),
+                        runAgentLoopUntilStop(
+                            context = context,
+                            initialState = agentLoopState.copy(running = true, paused = false, stopped = false),
                             goal = goal,
                             internetConfirmed = internetConfirmed,
-                            finalSubmitConfirmed = finalSubmitConfirmed
+                            finalSubmitConfirmed = finalSubmitConfirmed,
+                            stateRef = agentLoopRunStateRef,
+                            onState = { agentLoopState = it },
+                            onAfterStep = {
+                                screenSnapshot = ScreenStateStore.latest()
+                                logs = LogStore.readRecent(context, limit = 50)
+                            }
                         )
-                        screenSnapshot = ScreenStateStore.latest()
-                        logs = LogStore.readRecent(context, limit = 50)
                     } finally {
                         agentLoopLoading = false
                     }
                 }
             },
             onPause = {
+                agentLoopRunStateRef.set(ExecutionState.Paused)
                 agentLoopState = AgentLoopController(context).pause(agentLoopState)
                 logs = LogStore.readRecent(context, limit = 50)
             },
             onStop = {
+                agentLoopRunStateRef.set(ExecutionState.Stopped)
                 agentLoopState = AgentLoopController(context).stop(agentLoopState)
                 logs = LogStore.readRecent(context, limit = 50)
             },
@@ -592,7 +624,6 @@ private fun MainScreen() {
                                 }
                             )
                             executionState = executionStateRef.get()
-                            screenSnapshot = ScreenStateStore.latest()
                             logs = LogStore.readRecent(context, limit = 50)
                         } finally {
                             if (executionStateRef.get() == ExecutionState.Running) {
@@ -760,7 +791,8 @@ private fun AgentFullAccessSetupCard(
     onSelectWorkFolder: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onOpenUsageAccessSettings: () -> Unit,
-    onRequestBatteryOptimizationIgnore: () -> Unit
+    onRequestBatteryOptimizationIgnore: () -> Unit,
+    onRefreshStatus: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -772,6 +804,9 @@ private fun AgentFullAccessSetupCard(
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold
             )
+            Button(onClick = onRefreshStatus) {
+                Text("Setup status aktualisieren")
+            }
             SetupRow(
                 title = "Accessibility Service",
                 status = if (accessibilityEnabled) "Enabled" else "Not enabled",
@@ -782,7 +817,7 @@ private fun AgentFullAccessSetupCard(
             SetupRow(
                 title = "Screen Capture / MediaProjection",
                 status = if (mediaProjectionGranted) "Granted for this session" else "Not granted",
-                description = "Used later for screenshot/OCR based screen understanding.",
+                description = "Permission request is implemented. Screenshot capture and OCR are not wired into the executor yet.",
                 buttonText = "Request Screen Capture",
                 onClick = onRequestMediaProjection
             )
@@ -796,14 +831,14 @@ private fun AgentFullAccessSetupCard(
             SetupRow(
                 title = "Notification Access",
                 status = if (notificationAccessEnabled) "Enabled" else "Not enabled",
-                description = "Lets Nani observe notifications later if you explicitly enable Android's notification listener access.",
+                description = "Status can be detected. NotificationListenerService processing is not implemented yet.",
                 buttonText = "Open Notification Settings",
                 onClick = onOpenNotificationSettings
             )
             SetupRow(
                 title = "Usage Access",
                 status = if (usageAccessEnabled) "Enabled" else "Not enabled",
-                description = "Lets Nani understand foreground app usage if manually enabled.",
+                description = "Status can be detected. The executor does not rely on usage stats yet.",
                 buttonText = "Open Usage Access Settings",
                 onClick = onOpenUsageAccessSettings
             )
@@ -1002,7 +1037,7 @@ private fun AgentLoopCard(
                 ) {
                     Text(if (isLoading) "Läuft..." else "Weiter")
                 }
-                Button(onClick = onPause, enabled = !isLoading && !state.paused && !state.stopped) {
+                Button(onClick = onPause, enabled = !state.paused && !state.stopped) {
                     Text("Pause")
                 }
                 Button(onClick = onStop, enabled = !state.stopped) {
@@ -1625,7 +1660,8 @@ private suspend fun executePlanInChunks(
         val result = AgentExecutionController(context).execute(
             plan = plan.copy(operations = chunk),
             internetConfirmed = internetConfirmed,
-            finalSubmitConfirmed = finalSubmitConfirmed
+            finalSubmitConfirmed = finalSubmitConfirmed,
+            shouldContinue = { stateRef.get() == ExecutionState.Running }
         )
         successes += result.successes
         failures += result.failures
@@ -1636,6 +1672,60 @@ private suspend fun executePlanInChunks(
     }
 
     return ActionExecutionResult(successes, failures, warnings)
+}
+
+private suspend fun runAgentLoopUntilStop(
+    context: Context,
+    initialState: AgentLoopState,
+    goal: String,
+    internetConfirmed: Boolean,
+    finalSubmitConfirmed: Boolean,
+    stateRef: AtomicReference<ExecutionState>,
+    onState: (AgentLoopState) -> Unit,
+    onAfterStep: () -> Unit
+) {
+    val controller = AgentLoopController(context)
+    var current = initialState.copy(goal = goal, running = true, paused = false, stopped = false)
+    onState(current)
+
+    while (
+        stateRef.get() == ExecutionState.Running &&
+        current.running &&
+        !current.paused &&
+        !current.stopped &&
+        current.stepCount < current.maxSteps
+    ) {
+        current = controller.runNextStep(
+            previous = current,
+            goal = goal,
+            internetConfirmed = internetConfirmed,
+            finalSubmitConfirmed = finalSubmitConfirmed
+        )
+        onState(current)
+        onAfterStep()
+
+        if (
+            stateRef.get() != ExecutionState.Running ||
+            !current.running ||
+            current.paused ||
+            current.stopped ||
+            current.stopReason != AgentStopReason.None
+        ) {
+            break
+        }
+
+        var waitedMillis = 0
+        while (waitedMillis < 2_500 && stateRef.get() == ExecutionState.Running) {
+            delay(100)
+            waitedMillis += 100
+        }
+    }
+
+    when (stateRef.get()) {
+        ExecutionState.Paused -> onState(controller.pause(current))
+        ExecutionState.Stopped -> onState(controller.stop(current))
+        else -> Unit
+    }
 }
 
 private fun shortUri(uri: Uri?): String {
@@ -1679,7 +1769,7 @@ private fun operationText(operation: PlanOperation): String {
         "summarize_file" -> "Datei zusammenfassen: ${operation.path.orEmpty()}"
         "summarize_folder" -> "Arbeitsordner zusammenfassen"
         "search_files" -> "Dateien suchen: ${operation.query.orEmpty()}"
-        "batch_group_files" -> "Dateien in Gruppen vorschlagen"
+        "batch_group_files" -> "Dateien in Gruppen kopieren (${operation.groupSize ?: 25} pro Ordner)"
         "classify_files" -> "Dateien klassifizieren"
         "create_folder" -> "Ordner erstellen: ${operation.path.orEmpty()}"
         "create_file" -> "Datei erstellen: ${operation.path.orEmpty()}"

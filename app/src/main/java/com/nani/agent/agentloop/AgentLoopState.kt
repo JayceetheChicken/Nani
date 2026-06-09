@@ -9,7 +9,7 @@ data class AgentLoopState(
     val paused: Boolean = false,
     val stopped: Boolean = false,
     val stepCount: Int = 0,
-    val maxSteps: Int = 20,
+    val maxSteps: Int = 1000,
     val currentStep: AgentStep? = null,
     val lastAction: String? = null,
     val nextPlan: AiPlan? = null,

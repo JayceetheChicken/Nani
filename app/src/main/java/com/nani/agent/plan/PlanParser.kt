@@ -48,6 +48,11 @@ object PlanParser {
                                 ?: operation.optStringOrNull("viewIdResourceName"),
                             targetNodeId = operation.optJSONObject("target")?.optIntOrNull("nodeId")
                                 ?: operation.optIntOrNull("nodeId"),
+                            groupSize = operation.optIntOrNull("groupSize"),
+                            targetFolderPrefix = operation.optStringOrNull("targetFolderPrefix"),
+                            fileTypes = operation.optStringList("fileTypes"),
+                            mode = operation.optStringOrNull("mode"),
+                            sortBy = operation.optStringOrNull("sortBy"),
                             requiresFinalSubmitConfirmation = operation.optBoolean("requiresFinalSubmitConfirmation", false)
                         )
                     )
@@ -69,5 +74,15 @@ object PlanParser {
 
     private fun JSONObject.optIntOrNull(name: String): Int? {
         return if (has(name) && !isNull(name)) optInt(name) else null
+    }
+
+    private fun JSONObject.optStringList(name: String): List<String> {
+        val array = optJSONArray(name) ?: return emptyList()
+        return buildList {
+            for (index in 0 until array.length()) {
+                val value = array.optString(index).trim()
+                if (value.isNotBlank()) add(value)
+            }
+        }
     }
 }

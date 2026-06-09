@@ -31,14 +31,18 @@ class LocalGemmaProvider : AiProvider {
             )
             "sortiere" in normalized || "verschiebe" in normalized -> plan(
                 actionType = AiAction.OrganizeFiles,
-                explanation = "Local Dummy can suggest target folders for sorting. Originals stay unchanged.",
+                explanation = "Local Dummy can group matching image files by filename. Originals stay unchanged.",
                 requiresConfirmation = true,
                 requiresInternetConfirmation = false,
                 riskLevel = AiRiskLevel.Medium,
                 operations = listOf(
                     JSONObject()
-                        .put("op", "create_folder")
-                        .put("path", "Schule")
+                        .put("op", "batch_group_files")
+                        .put("groupSize", 25)
+                        .put("targetFolderPrefix", "W")
+                        .put("fileTypes", JSONArray(listOf("jpg", "jpeg", "png")))
+                        .put("mode", "copy")
+                        .put("sortBy", "name")
                 )
             )
             "erstelle datei" in normalized || "datei erstellen" in normalized -> plan(

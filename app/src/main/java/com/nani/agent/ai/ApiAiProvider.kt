@@ -242,12 +242,13 @@ class ApiAiProvider(
         You only propose plans. You do not execute actions and never claim files were changed.
         For UI/browser/form tasks, plan exactly one small next step, not a long blind sequence. Use actionType "agent_step" for the next step.
         Allowed actionType values: agent_step, read_screen, use_app, use_browser, fill_form, read_files, write_files, edit_files, organize_files, ask_confirmation, ask_clarifying_question, blocked.
-        Allowed operation op values inside proposedJson.operations: open_url, read_screen, scroll_forward, scroll_backward, tap_node, set_text, wait, press_back, summarize_folder, classify_files, batch_group_files.
-        You may plan: read screen, use allowed apps, use browser after internet confirmation, read webpages, fill forms, scroll, click visible nodes, enter text, read files, analyze files, create files, edit text files, copy files, rename files, and create folders.
+        Allowed operation op values inside proposedJson.operations: open_url, read_screen, scroll_forward, scroll_backward, tap_node, set_text, wait, press_back, summarize_folder, classify_files, batch_group_files, create_folder, create_file, edit_text_file, append_text_file, copy_file, rename_file, read_file, summarize_file, list_files, search_files, click_button_by_text, set_field_by_label, set_field_by_hint, set_field_by_node_id.
+        You may plan only the listed operations. Never generate work_on_webpage or vague webpage/task operations.
+        You may plan: read screen, use allowed apps, use browser after internet confirmation, read webpages, fill forms, scroll, click visible nodes, enter text, read files, analyze files, create files, edit text files, copy files, rename files, batch group files, and create folders.
         Never plan: delete_file, move_file, wipe_folder, clear_folder, format_storage, Android Settings, permission changes, app install/uninstall, root, device admin, overlay, main user profile access, banking/payment/auth/password-manager automation, password entry, 2FA entry, captcha solving, purchase/payment/order confirmation, blind clicks, or coordinate-only clicks.
         Browser, web, online services, URL opening, uploads, sharing, messages, email, posts, and cloud actions require requiresInternetConfirmation=true.
         If a form should be submitted, return actionType "ask_confirmation" and set requiresFinalSubmitConfirmation=true on the submit/click operation.
-        For file sorting tasks, prefer one batch_group_files operation instead of generating one operation per file.
+        For file sorting tasks, prefer one batch_group_files operation instead of generating one operation per file. For image grouping use: { "op": "batch_group_files", "groupSize": 25, "targetFolderPrefix": "W", "fileTypes": ["jpg", "jpeg", "png"], "mode": "copy", "sortBy": "name" }.
         Do not plan deletion of original files.
         If a password, PIN, TAN, 2FA, captcha, credit-card, IBAN, ID, or health field is visible or requested, do not fill it; ask a clarifying question or block.
         If Internet is needed, set requiresInternetConfirmation=true, explain why, and include target URL/app/reason when known.
@@ -276,6 +277,7 @@ class ApiAiProvider(
               { "op": "summarize_folder" },
               { "op": "search_files", "query": "pdf" },
               { "op": "classify_files" },
+              { "op": "batch_group_files", "groupSize": 25, "targetFolderPrefix": "W", "fileTypes": ["jpg", "jpeg", "png"], "mode": "copy", "sortBy": "name" },
               { "op": "read_screen" },
               { "op": "tap_node", "target": { "textOrHint": "OK" } },
               { "op": "set_text", "target": { "textOrHint": "Search" }, "text": "query" },

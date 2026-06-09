@@ -168,6 +168,86 @@ class SafFileRepository(
         }
     }
 
+    fun listFileEntries(limit: Int = Int.MAX_VALUE): List<SafFileEntry> {
+        val result = mutableListOf<SafFileEntry>()
+        fun walk(folder: DocumentFile, prefix: String) {
+            if (result.size >= limit) return
+            folder.listFiles().forEach { child ->
+                if (result.size >= limit) return
+                val name = child.name.orEmpty()
+                val path = if (prefix.isBlank()) name else "$prefix/$name"
+                if (child.isDirectory) {
+                    walk(child, path)
+                } else if (child.isFile) {
+                    result += SafFileEntry(
+                        path = path,
+                        name = name,
+                        extension = name.substringAfterLast('.', missingDelimiterValue = "").lowercase(),
+                        lastModified = child.lastModified(),
+                        size = child.length()
+                    )
+                }
+            }
+        }
+        walk(root, "")
+        return result
+    }
+
+    fun batchGroupFiles(
+        groupSize: Int = 25,
+        targetFolderPrefix: String = "W",
+        fileTypes: List<String> = listOf("jpg", "jpeg", "png"),
+        mode: String = "copy",
+        sortBy: String = "name",
+        shouldContinue: () -> Boolean = { true }
+    ): BatchGroupResult {
+        if (mode.lowercase() != "copy") {
+            error("batch_group_files only supports copy mode. Originals are always kept.")
+        }
+        if (groupSize <= 0) error("groupSize must be greater than zero.")
+        if (targetFolderPrefix.contains('/') || targetFolderPrefix.contains('\\') || targetFolderPrefix.contains(':')) {
+            error("targetFolderPrefix must be a simple folder-name prefix.")
+        }
+        val normalizedTypes = fileTypes
+            .map { it.trim().removePrefix(".").lowercase() }
+            .filter { it.isNotBlank() }
+            .ifEmpty { listOf("jpg", "jpeg", "png") }
+            .toSet()
+        val prefix = targetFolderPrefix.ifBlank { "W" }
+        val targetFolderPattern = Regex("^${Regex.escape(prefix)}-\\d+/")
+        val files = listFileEntries()
+            .asSequence()
+            .filter { it.extension in normalizedTypes }
+            .filterNot { targetFolderPattern.containsMatchIn(it.path) }
+            .toList()
+            .sortedWith(
+                if (sortBy.lowercase() == "date") {
+                    compareBy<SafFileEntry> { it.lastModified }.then(naturalNameComparator())
+                } else {
+                    naturalNameComparator()
+                }
+            )
+
+        val copied = mutableListOf<String>()
+        files.chunked(groupSize).forEachIndexed { index, chunk ->
+            if (!shouldContinue()) error("Batch grouping paused or stopped.")
+            val folderName = "$prefix-${index + 1}"
+            createFolder(folderName)
+            chunk.forEach { file ->
+                if (!shouldContinue()) error("Batch grouping paused or stopped.")
+                copyFile(file.path, "$folderName/${file.name}")
+                copied += "${file.path} -> $folderName/${file.name}"
+            }
+        }
+
+        return BatchGroupResult(
+            matchedFiles = files.size,
+            createdGroups = if (files.isEmpty()) 0 else ((files.size - 1) / groupSize) + 1,
+            copiedFiles = copied.size,
+            examples = copied.take(20)
+        )
+    }
+
     private fun collectEntries(folder: DocumentFile, prefix: String, result: MutableList<String>, limit: Int) {
         if (result.size >= limit) return
         folder.listFiles().forEach { child ->
@@ -219,6 +299,21 @@ class SafFileRepository(
     }
 }
 
+data class SafFileEntry(
+    val path: String,
+    val name: String,
+    val extension: String,
+    val lastModified: Long,
+    val size: Long
+)
+
+data class BatchGroupResult(
+    val matchedFiles: Int,
+    val createdGroups: Int,
+    val copiedFiles: Int,
+    val examples: List<String>
+)
+
 private fun String.looksTextLike(): Boolean {
     val lower = lowercase()
     return lower.endsWith(".txt") ||
@@ -241,3 +336,33 @@ data class FolderSummary(
     val extensions: Map<String, Int>,
     val firstFiles: List<String>
 )
+
+private fun naturalNameComparator(): Comparator<SafFileEntry> {
+    return Comparator { left, right -> naturalCompare(left.name, right.name) }
+}
+
+private fun naturalCompare(left: String, right: String): Int {
+    var leftIndex = 0
+    var rightIndex = 0
+    while (leftIndex < left.length && rightIndex < right.length) {
+        val leftChar = left[leftIndex]
+        val rightChar = right[rightIndex]
+        if (leftChar.isDigit() && rightChar.isDigit()) {
+            val leftStart = leftIndex
+            val rightStart = rightIndex
+            while (leftIndex < left.length && left[leftIndex].isDigit()) leftIndex += 1
+            while (rightIndex < right.length && right[rightIndex].isDigit()) rightIndex += 1
+            val leftNumber = left.substring(leftStart, leftIndex).trimStart('0').ifEmpty { "0" }
+            val rightNumber = right.substring(rightStart, rightIndex).trimStart('0').ifEmpty { "0" }
+            if (leftNumber.length != rightNumber.length) return leftNumber.length - rightNumber.length
+            val numberCompare = leftNumber.compareTo(rightNumber)
+            if (numberCompare != 0) return numberCompare
+        } else {
+            val charCompare = leftChar.lowercaseChar().compareTo(rightChar.lowercaseChar())
+            if (charCompare != 0) return charCompare
+            leftIndex += 1
+            rightIndex += 1
+        }
+    }
+    return left.length - right.length
+}

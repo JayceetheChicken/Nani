@@ -192,6 +192,8 @@ class AgentLoopController(
             Plan only the next single small step as JSON. Use actionType agent_step unless confirmation, blocked, or done is required.
             If done, return done=true and no operations.
             If internet/browser/web is needed, return ask_confirmation with requiresInternetConfirmation=true unless already on a web page and the next visible step is safe.
+            Allowed operation op values: open_url, read_screen, scroll_forward, scroll_backward, tap_node, set_text, wait, press_back, summarize_folder, classify_files, batch_group_files, create_folder, create_file, edit_text_file, append_text_file, copy_file, rename_file, read_file, summarize_file, list_files, search_files, click_button_by_text, set_field_by_label, set_field_by_hint, set_field_by_node_id.
+            Never generate work_on_webpage or vague unsupported operations.
             Never plan Settings, permission changes, app installs, deletion, passwords, PINs, 2FA, TAN, captcha, purchases, payments, or blind coordinate clicks.
 
             Current shortened screen snapshot:

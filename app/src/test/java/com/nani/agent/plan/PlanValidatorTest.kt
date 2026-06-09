@@ -208,6 +208,87 @@ class PlanValidatorTest {
         }
     }
 
+    @Test
+    fun allowsNineHundredNinetyNineOperations() {
+        val plan = basePlan(
+            requiresConfirmation = false,
+            operations = List(999) {
+                PlanOperation(
+                    op = PlanOperationType.ListFiles,
+                    rawOp = "list_files"
+                )
+            }
+        )
+
+        assertTrue(PlanValidator.validate(plan, hasWorkFolder = true).isValid)
+    }
+
+    @Test
+    fun blocksOneThousandOneOperations() {
+        val plan = basePlan(
+            requiresConfirmation = false,
+            operations = List(1001) {
+                PlanOperation(
+                    op = PlanOperationType.ListFiles,
+                    rawOp = "list_files"
+                )
+            }
+        )
+
+        val result = PlanValidator.validate(plan, hasWorkFolder = true)
+
+        assertFalse(result.isValid)
+        assertTrue(result.errors.any { it.contains("too many operations") })
+    }
+
+    @Test
+    fun batchGroupFilesRequiresWorkFolderAndConfirmation() {
+        val plan = basePlan(
+            requiresConfirmation = true,
+            operations = listOf(
+                PlanOperation(
+                    op = PlanOperationType.BatchGroupFiles,
+                    rawOp = "batch_group_files",
+                    groupSize = 25,
+                    targetFolderPrefix = "W",
+                    fileTypes = listOf("jpg", "jpeg", "png"),
+                    mode = "copy",
+                    sortBy = "name"
+                )
+            )
+        )
+
+        val valid = PlanValidator.validate(plan, hasWorkFolder = true)
+        val withoutFolder = PlanValidator.validate(plan, hasWorkFolder = false)
+        val withoutConfirmation = PlanValidator.validate(plan.copy(requiresConfirmation = false), hasWorkFolder = true)
+
+        assertTrue(valid.isValid)
+        assertTrue(valid.requiresWorkFolder)
+        assertTrue(valid.hasWritingOperations)
+        assertFalse(withoutFolder.isValid)
+        assertFalse(withoutConfirmation.isValid)
+    }
+
+    @Test
+    fun rejectsWorkOnWebpage() {
+        val plan = basePlan(
+            actionType = AiAction.AgentStep,
+            requiresConfirmation = false,
+            riskLevel = AiRiskLevel.Low,
+            operations = listOf(
+                PlanOperation(
+                    op = PlanOperationType.Unsupported,
+                    rawOp = "work_on_webpage"
+                )
+            )
+        )
+
+        val result = PlanValidator.validate(plan, hasWorkFolder = false)
+
+        assertFalse(result.isValid)
+        assertTrue(result.errors.any { it.contains("forbidden") })
+    }
+
     private fun basePlan(
         actionType: AiAction = AiAction.OrganizeFiles,
         requiresConfirmation: Boolean = true,

@@ -35,6 +35,7 @@ object PlanValidator {
         "overlay_action",
         "accessibility_click",
         "accessibility_gesture",
+        "work_on_webpage",
         "permission",
         "settings"
     )
@@ -44,10 +45,13 @@ object PlanValidator {
         PlanOperationType.SetText,
         PlanOperationType.AppendText,
         PlanOperationType.Scroll,
+        PlanOperationType.ScrollForward,
+        PlanOperationType.ScrollBackward,
         PlanOperationType.PressBack,
         PlanOperationType.PressHome,
         PlanOperationType.OpenApp,
         PlanOperationType.WaitForScreen,
+        PlanOperationType.Wait,
         PlanOperationType.FindNode,
         PlanOperationType.SelectOption,
         PlanOperationType.FillForm,
@@ -175,8 +179,10 @@ object PlanValidator {
             PlanOperationType.ListFiles,
             PlanOperationType.SummarizeFolder,
             PlanOperationType.SearchFiles,
-            PlanOperationType.BatchGroupFiles,
             PlanOperationType.ClassifyFiles -> Unit
+            PlanOperationType.BatchGroupFiles -> {
+                validateBatchGroupFiles(index, operation, errors)
+            }
             PlanOperationType.ReadFile,
             PlanOperationType.SummarizeFile -> {
                 validatePath("operation ${index + 1} path", operation.path, errors)
@@ -260,6 +266,33 @@ object PlanValidator {
         val normalized = content.orEmpty().lowercase()
         if (secretMarkers.any { normalized.contains(it) }) {
             errors += "$label appears to contain sensitive data."
+        }
+    }
+
+    private fun validateBatchGroupFiles(index: Int, operation: PlanOperation, errors: MutableList<String>) {
+        val groupSize = operation.groupSize ?: return
+        if (groupSize !in 1..MAX_OPERATIONS) {
+            errors += "operation ${index + 1} groupSize must be between 1 and $MAX_OPERATIONS."
+        }
+        val mode = operation.mode?.lowercase()
+        if (mode != null && mode != "copy") {
+            errors += "operation ${index + 1} batch_group_files only supports copy mode in this MVP."
+        }
+        val prefix = operation.targetFolderPrefix
+        if (prefix != null) {
+            val normalizedPrefix = prefix.replace("\\", "/").lowercase()
+            if (normalizedPrefix.isBlank() ||
+                normalizedPrefix.contains("/") ||
+                normalizedPrefix.contains(":") ||
+                normalizedPrefix == "." ||
+                normalizedPrefix == ".."
+            ) {
+                errors += "operation ${index + 1} targetFolderPrefix must be a simple folder-name prefix."
+            }
+        }
+        val sortBy = operation.sortBy?.lowercase()
+        if (sortBy != null && sortBy !in setOf("name", "date")) {
+            errors += "operation ${index + 1} sortBy must be name or date."
         }
     }
 

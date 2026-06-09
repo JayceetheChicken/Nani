@@ -29,6 +29,11 @@ data class PlanOperation(
     val targetTextOrHint: String? = null,
     val targetViewIdResourceName: String? = null,
     val targetNodeId: Int? = null,
+    val groupSize: Int? = null,
+    val targetFolderPrefix: String? = null,
+    val fileTypes: List<String> = emptyList(),
+    val mode: String? = null,
+    val sortBy: String? = null,
     val requiresFinalSubmitConfirmation: Boolean = false
 )
 
@@ -38,7 +43,7 @@ enum class PlanOperationType(val wireName: String, val writes: Boolean, val uses
     SummarizeFile("summarize_file", writes = false),
     SearchFiles("search_files", writes = false),
     ClassifyFiles("classify_files", writes = false),
-    BatchGroupFiles("batch_group_files", writes = false),
+    BatchGroupFiles("batch_group_files", writes = true),
     CreateFolder("create_folder", writes = true),
     CreateFile("create_file", writes = true),
     EditTextFile("edit_text_file", writes = true),

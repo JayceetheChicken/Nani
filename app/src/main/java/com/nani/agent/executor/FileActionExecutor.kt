@@ -12,7 +12,8 @@ import com.nani.agent.saf.SafFileRepository
 import com.nani.agent.saf.SafRootStore
 
 class FileActionExecutor(
-    private val context: Context
+    private val context: Context,
+    private val shouldContinue: () -> Boolean = { true }
 ) {
     fun execute(plan: ExecutablePlan): ActionExecutionResult {
         val safRoot = SafRootStore.getRootUri(context)
@@ -61,8 +62,15 @@ class FileActionExecutor(
                         ?: broadRepository!!.summarizeFolder().format()
                     PlanOperationType.SearchFiles -> safRepository?.searchFiles(operation.query.orEmpty())?.formatList("Matches")
                         ?: broadRepository!!.searchFiles(operation.query.orEmpty()).formatList("Matches")
-                    PlanOperationType.BatchGroupFiles -> safRepository?.classifyFiles()?.formatList("Suggested groups")
-                        ?: broadRepository!!.classifyFiles().formatList("Suggested groups")
+                    PlanOperationType.BatchGroupFiles -> safRepository?.batchGroupFiles(
+                        groupSize = operation.groupSize ?: 25,
+                        targetFolderPrefix = operation.targetFolderPrefix ?: "W",
+                        fileTypes = operation.fileTypes.ifEmpty { listOf("jpg", "jpeg", "png") },
+                        mode = operation.mode ?: "copy",
+                        sortBy = operation.sortBy ?: "name",
+                        shouldContinue = shouldContinue
+                    )?.format()
+                        ?: error("batch_group_files requires a selected SAF work folder.")
                     PlanOperationType.ClassifyFiles -> safRepository?.classifyFiles()?.formatList("Classifications")
                         ?: broadRepository!!.classifyFiles().formatList("Classifications")
                     PlanOperationType.CreateFolder -> safRepository?.createFolder(requireNotNull(operation.path))
@@ -90,7 +98,7 @@ class FileActionExecutor(
             }
         }
 
-        if (plan.operations.any { it.op == PlanOperationType.CopyFile }) {
+        if (plan.operations.any { it.op == PlanOperationType.CopyFile || it.op == PlanOperationType.BatchGroupFiles }) {
             warnings += "Original files were kept. Existing targets were not overwritten."
         }
 
@@ -110,6 +118,19 @@ private fun FolderSummary.format(): String {
         if (firstFiles.isNotEmpty()) {
             appendLine("First files:")
             append(firstFiles.joinToString("\n"))
+        }
+    }
+}
+
+private fun com.nani.agent.saf.BatchGroupResult.format(): String {
+    return buildString {
+        appendLine("Batch grouped files")
+        appendLine("Matched files: $matchedFiles")
+        appendLine("Created groups: $createdGroups")
+        appendLine("Copied files: $copiedFiles")
+        if (examples.isNotEmpty()) {
+            appendLine("Examples:")
+            append(examples.joinToString("\n"))
         }
     }
 }

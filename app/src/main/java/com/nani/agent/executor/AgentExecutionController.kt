@@ -24,8 +24,17 @@ class AgentExecutionController(
     suspend fun execute(
         plan: ExecutablePlan,
         internetConfirmed: Boolean,
-        finalSubmitConfirmed: Boolean = false
+        finalSubmitConfirmed: Boolean = false,
+        shouldContinue: () -> Boolean = { true }
     ): ActionExecutionResult = withContext(Dispatchers.IO) {
+        if (!shouldContinue()) {
+            return@withContext ActionExecutionResult(
+                successes = emptyList(),
+                failures = listOf("Execution is not running."),
+                warnings = emptyList()
+            )
+        }
+
         val hasFileRoot = SafRootStore.getRootUri(context) != null || BroadStorageAccess.isGranted()
         val validation = PlanValidator.validate(
             plan = plan,
@@ -61,7 +70,7 @@ class AgentExecutionController(
             )
         }
 
-        val result = FileActionExecutor(context).execute(plan)
+        val result = FileActionExecutor(context, shouldContinue).execute(plan)
         return@withContext result.copy(warnings = validation.warnings + result.warnings)
     }
 
