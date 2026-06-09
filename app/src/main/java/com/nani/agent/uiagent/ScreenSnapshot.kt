@@ -12,6 +12,23 @@ data class ScreenSnapshot(
             appendLine("App: ${appLabel ?: foregroundPackage.ifBlank { "unknown" }}")
             if (!windowTitle.isNullOrBlank()) appendLine("Window: $windowTitle")
             appendLine("Visible nodes: ${nodes.size}")
-            nodes.take(12).forEach { appendLine(it.compactLine()) }
+            usefulNodes().take(30).forEach { appendLine(it.compactLine()) }
         }.trim()
+
+    private fun usefulNodes(): List<UiNodeInfo> {
+        return nodes.sortedWith(
+            compareBy<UiNodeInfo> { nodePriority(it) }
+                .thenBy { it.id }
+        )
+    }
+
+    private fun nodePriority(node: UiNodeInfo): Int {
+        return when {
+            node.editable -> 0
+            node.clickable -> 1
+            node.scrollable -> 2
+            !node.text.isNullOrBlank() || !node.contentDescription.isNullOrBlank() -> 3
+            else -> 4
+        }
+    }
 }

@@ -9,7 +9,6 @@ import com.nani.agent.executor.AgentExecutionController
 import com.nani.agent.memory.MemoryStore
 import com.nani.agent.plan.ExecutablePlan
 import com.nani.agent.plan.PlanParser
-import com.nani.agent.plan.PlanOperationType
 import com.nani.agent.plan.PlanValidator
 import com.nani.agent.saf.BroadStorageAccess
 import com.nani.agent.saf.SafRootStore
@@ -57,9 +56,7 @@ class AgentLoopController(
                 val provider = AiProviderFactory.create(settings)
                 val plan = provider.generatePlan(buildStepPrompt(goal, snapshot?.summary))
                 val executable = PlanParser.parse(plan).singleStep()
-                val opensOnly = executable.operations.isNotEmpty() &&
-                    executable.operations.all { it.op == PlanOperationType.OpenUrl || it.op == PlanOperationType.OpenApp }
-                val taskDone = (plan.done || executable.done) && !opensOnly
+                val taskDone = (plan.done || executable.done) && executable.operations.isEmpty()
                 val hasFileRoot = SafRootStore.getRootUri(context) != null || BroadStorageAccess.isGranted()
                 val validation = PlanValidator.validate(
                     plan = executable,
