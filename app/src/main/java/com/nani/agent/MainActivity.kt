@@ -149,7 +149,6 @@ private fun MainScreen() {
             accessibilityEnabled = isAccessibilityServiceEnabled(context)
             agentEnabled = AgentPrefs.isAgentEnabled(context)
             guardEnabled = AgentPrefs.isGuardEnabled(context)
-            aiSettings = AiPrefs.load(context)
             broadStorageGranted = BroadStorageAccess.isGranted()
             screenSnapshot = ScreenStateStore.latest()
             logs = LogStore.readRecent(context, limit = 50)
