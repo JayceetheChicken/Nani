@@ -48,6 +48,8 @@ import com.nani.agent.ai.AiPrefs
 import com.nani.agent.ai.AiProviderFactory
 import com.nani.agent.ai.AiSettings
 import com.nani.agent.executor.AgentExecutionController
+import com.nani.agent.memory.MemoryItem
+import com.nani.agent.memory.MemoryStore
 import com.nani.agent.plan.ExecutablePlan
 import com.nani.agent.plan.PlanOperation
 import com.nani.agent.plan.PlanParser
@@ -120,6 +122,9 @@ private fun MainScreen() {
     var screenMessage by remember { mutableStateOf<String?>(null) }
     var agentLoopState by remember { mutableStateOf(AgentLoopState()) }
     var agentLoopLoading by remember { mutableStateOf(false) }
+    var memoryText by remember { mutableStateOf("") }
+    var memories by remember { mutableStateOf(MemoryStore.listMemories(context)) }
+    var memoryMessage by remember { mutableStateOf<String?>(null) }
     var logs by remember { mutableStateOf(LogStore.readRecent(context, limit = 50)) }
 
     val openTreeLauncher = rememberLauncherForActivityResult(
@@ -519,6 +524,32 @@ private fun MainScreen() {
         )
 
         ExecutionResultCard(result = executionResult)
+
+        MemoryCard(
+            memories = memories,
+            newMemory = memoryText,
+            message = memoryMessage,
+            onMemoryChanged = {
+                memoryText = it
+                memoryMessage = null
+            },
+            onAddMemory = {
+                runCatching {
+                    MemoryStore.addMemory(context, memoryText)
+                }.onSuccess {
+                    memoryText = ""
+                    memories = MemoryStore.listMemories(context)
+                    memoryMessage = "Memory added."
+                }.onFailure {
+                    memoryMessage = it.message ?: "Memory could not be saved."
+                }
+            },
+            onDisableMemory = { id ->
+                MemoryStore.disableMemory(context, id)
+                memories = MemoryStore.listMemories(context)
+                memoryMessage = "Memory disabled."
+            }
+        )
 
         AiSettingsCard(
             settings = aiSettings,
@@ -1000,6 +1031,69 @@ private fun ExecutionResultCard(result: ActionExecutionResult?) {
                 Text("Warnings", fontWeight = FontWeight.SemiBold)
                 result.warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
+        }
+    }
+}
+
+@Composable
+private fun MemoryCard(
+    memories: List<MemoryItem>,
+    newMemory: String,
+    message: String?,
+    onMemoryChanged: (String) -> Unit,
+    onAddMemory: () -> Unit,
+    onDisableMemory: (String) -> Unit
+) {
+    val enabledMemories = memories.filter { it.enabled }
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "Memory",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            if (enabledMemories.isEmpty()) {
+                Text("No enabled memories yet.")
+            } else {
+                enabledMemories.forEach { memory ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = memory.content,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Button(onClick = { onDisableMemory(memory.id) }) {
+                            Text("Disable")
+                        }
+                    }
+                }
+            }
+            OutlinedTextField(
+                value = newMemory,
+                onValueChange = onMemoryChanged,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Add local memory") },
+                placeholder = { Text("Example: I prefer short answers in German.") },
+                minLines = 2,
+                maxLines = 4
+            )
+            Button(onClick = onAddMemory, enabled = newMemory.isNotBlank()) {
+                Text("Add Memory")
+            }
+            if (message != null) {
+                Text(message, style = MaterialTheme.typography.bodySmall)
+            }
+            Text(
+                text = "No hard delete. Sensitive data like passwords, PINs, 2FA, TANs, captchas, credit cards, IBAN, and health data is refused.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 }
