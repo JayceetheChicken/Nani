@@ -174,6 +174,40 @@ class PlanValidatorTest {
         assertTrue(PlanValidator.validate(confirmationPlan, hasWorkFolder = false, internetConfirmed = true).isValid)
     }
 
+    @Test
+    fun allowsSingleAgentStepForVisibleUiAction() {
+        val plan = basePlan(
+            actionType = AiAction.AgentStep,
+            requiresConfirmation = false,
+            riskLevel = AiRiskLevel.Low,
+            operations = listOf(
+                PlanOperation(
+                    op = PlanOperationType.TapNode,
+                    rawOp = "tap_node",
+                    targetTextOrHint = "Suchen"
+                )
+            )
+        )
+
+        assertTrue(PlanValidator.validate(plan, hasWorkFolder = false).isValid)
+    }
+
+    @Test
+    fun blocksDeleteSynonyms() {
+        listOf("delete", "remove_file", "trash_file", "clear_folder").forEach { rawOp ->
+            val plan = basePlan(
+                operations = listOf(
+                    PlanOperation(
+                        op = PlanOperationType.Unsupported,
+                        rawOp = rawOp
+                    )
+                )
+            )
+
+            assertFalse(PlanValidator.validate(plan, hasWorkFolder = true).isValid)
+        }
+    }
+
     private fun basePlan(
         actionType: AiAction = AiAction.OrganizeFiles,
         requiresConfirmation: Boolean = true,

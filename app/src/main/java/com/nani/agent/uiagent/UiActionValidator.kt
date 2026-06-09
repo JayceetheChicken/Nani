@@ -24,7 +24,10 @@ object UiActionValidator {
         "enter_2fa_code",
         "solve_captcha",
         "delete_file",
+        "delete",
         "factory_reset",
+        "enter_pin",
+        "enter_tan",
         "root_action",
         "device_admin_action",
         "overlay_action"

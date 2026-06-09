@@ -5,11 +5,13 @@ data class AiPlan(
     val explanation: String,
     val requiresConfirmation: Boolean,
     val requiresInternetConfirmation: Boolean = false,
+    val done: Boolean = false,
     val riskLevel: AiRiskLevel,
     val proposedJson: String
 )
 
 enum class AiAction(val wireName: String) {
+    AgentStep("agent_step"),
     ReadScreen("read_screen"),
     FillForm("fill_form"),
     WorkOnWebpage("work_on_webpage"),

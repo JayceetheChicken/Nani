@@ -39,6 +39,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.nani.agent.agent.NaniAccessibilityService
+import com.nani.agent.agentloop.AgentLoopController
+import com.nani.agent.agentloop.AgentLoopState
+import com.nani.agent.agentloop.AgentStopReason
 import com.nani.agent.ai.AiAction
 import com.nani.agent.ai.AiPlan
 import com.nani.agent.ai.AiPrefs
@@ -115,6 +118,8 @@ private fun MainScreen() {
     var workFolderScanning by remember { mutableStateOf(false) }
     var screenSnapshot by remember { mutableStateOf(ScreenStateStore.latest()) }
     var screenMessage by remember { mutableStateOf<String?>(null) }
+    var agentLoopState by remember { mutableStateOf(AgentLoopState()) }
+    var agentLoopLoading by remember { mutableStateOf(false) }
     var logs by remember { mutableStateOf(LogStore.readRecent(context, limit = 50)) }
 
     val openTreeLauncher = rememberLauncherForActivityResult(
@@ -296,6 +301,29 @@ private fun MainScreen() {
                     commandMessage = null
                 }
             },
+            onStartAgent = {
+                if (commandText.isBlank()) {
+                    commandMessage = "Please enter a command first."
+                } else {
+                    coroutineScope.launch {
+                        agentLoopLoading = true
+                        commandMessage = null
+                        agentLoopState = AgentLoopState(goal = commandText, running = true)
+                        try {
+                            agentLoopState = AgentLoopController(context).runNextStep(
+                                previous = agentLoopState,
+                                goal = commandText,
+                                internetConfirmed = internetConfirmed,
+                                finalSubmitConfirmed = finalSubmitConfirmed
+                            )
+                            screenSnapshot = ScreenStateStore.latest()
+                            logs = LogStore.readRecent(context, limit = 50)
+                        } finally {
+                            agentLoopLoading = false
+                        }
+                    }
+                }
+            },
             onGeneratePlan = {
                 if (commandText.isBlank()) {
                     commandMessage = "Please enter a command first."
@@ -358,6 +386,46 @@ private fun MainScreen() {
                         }
                     }
                 }
+            }
+        )
+
+        AgentLoopCard(
+            state = agentLoopState,
+            isLoading = agentLoopLoading,
+            internetConfirmed = internetConfirmed,
+            finalSubmitConfirmed = finalSubmitConfirmed,
+            onAllowInternet = { internetConfirmed = true },
+            onAllowFinalSubmit = { finalSubmitConfirmed = true },
+            onContinue = {
+                val goal = agentLoopState.goal.ifBlank { commandText }
+                coroutineScope.launch {
+                    agentLoopLoading = true
+                    try {
+                        agentLoopState = AgentLoopController(context).runNextStep(
+                            previous = agentLoopState.copy(running = true, paused = false, stopped = false),
+                            goal = goal,
+                            internetConfirmed = internetConfirmed,
+                            finalSubmitConfirmed = finalSubmitConfirmed
+                        )
+                        screenSnapshot = ScreenStateStore.latest()
+                        logs = LogStore.readRecent(context, limit = 50)
+                    } finally {
+                        agentLoopLoading = false
+                    }
+                }
+            },
+            onPause = {
+                agentLoopState = AgentLoopController(context).pause(agentLoopState)
+                logs = LogStore.readRecent(context, limit = 50)
+            },
+            onStop = {
+                agentLoopState = AgentLoopController(context).stop(agentLoopState)
+                logs = LogStore.readRecent(context, limit = 50)
+            },
+            onDiscard = {
+                agentLoopState = AgentLoopController(context).discard()
+                internetConfirmed = false
+                finalSubmitConfirmed = false
             }
         )
 
@@ -622,6 +690,7 @@ private fun AgentCommandCenterCard(
     message: String?,
     isGenerating: Boolean,
     onCommandChanged: (String) -> Unit,
+    onStartAgent: () -> Unit,
     onGeneratePlan: () -> Unit
 ) {
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -644,8 +713,16 @@ private fun AgentCommandCenterCard(
                 minLines = 3,
                 maxLines = 6
             )
-            Button(onClick = onGeneratePlan, enabled = !isGenerating) {
-                Text(if (isGenerating) "Plan wird erstellt..." else "Plan erstellen")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(onClick = onStartAgent, enabled = !isGenerating) {
+                    Text("Agent starten")
+                }
+                Button(onClick = onGeneratePlan, enabled = !isGenerating) {
+                    Text(if (isGenerating) "Plan wird erstellt..." else "Plan erstellen")
+                }
             }
             if (isGenerating) {
                 Text("Generating safe JSON plan...")
@@ -656,6 +733,82 @@ private fun AgentCommandCenterCard(
                     color = MaterialTheme.colorScheme.error,
                     fontWeight = FontWeight.SemiBold
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AgentLoopCard(
+    state: AgentLoopState,
+    isLoading: Boolean,
+    internetConfirmed: Boolean,
+    finalSubmitConfirmed: Boolean,
+    onAllowInternet: () -> Unit,
+    onAllowFinalSubmit: () -> Unit,
+    onContinue: () -> Unit,
+    onPause: () -> Unit,
+    onStop: () -> Unit,
+    onDiscard: () -> Unit
+) {
+    if (state.goal.isBlank() && state.currentStep == null && !isLoading) return
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "Agent Loop",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text("Goal: ${state.goal}")
+            Text("Steps: ${state.stepCount}/${state.maxSteps}")
+            Text("Status: ${loopStatusText(state, isLoading)}")
+            state.currentStep?.let { step ->
+                Text("Current step: ${step.explanation}")
+                if (step.operations.isNotEmpty()) {
+                    Text("Next action: ${step.operations.first().rawOp}")
+                }
+            }
+            state.lastAction?.let { Text("Last action: $it") }
+            state.message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            state.lastResult?.let { result ->
+                result.successes.take(2).forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                result.failures.take(2).forEach { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+            }
+            if (state.stopReason == AgentStopReason.NeedsInternetConfirmation && !internetConfirmed) {
+                Text("Internet erlauben? Browser/Web actions can transfer data outside the device.")
+                Button(onClick = onAllowInternet) {
+                    Text("Internet erlauben")
+                }
+            }
+            if (state.stopReason == AgentStopReason.NeedsFinalSubmitConfirmation && !finalSubmitConfirmed) {
+                Text("Formular wirklich absenden?")
+                Button(onClick = onAllowFinalSubmit) {
+                    Text("Absenden erlauben")
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(
+                    onClick = onContinue,
+                    enabled = !isLoading && !state.stopped && state.stepCount < state.maxSteps
+                ) {
+                    Text(if (isLoading) "Läuft..." else "Weiter")
+                }
+                Button(onClick = onPause, enabled = !isLoading && !state.paused && !state.stopped) {
+                    Text("Pause")
+                }
+                Button(onClick = onStop, enabled = !state.stopped) {
+                    Text("Stop")
+                }
+                Button(onClick = onDiscard) {
+                    Text("Verwerfen")
+                }
             }
         }
     }
@@ -1125,6 +1278,16 @@ private fun fileAccessMode(uri: Uri?, broadStorageGranted: Boolean): String {
     }
 }
 
+private fun loopStatusText(state: AgentLoopState, isLoading: Boolean): String {
+    return when {
+        isLoading -> "Running one visible step"
+        state.stopped -> "Stopped: ${state.stopReason}"
+        state.paused -> "Paused: ${state.stopReason}"
+        state.running -> "Ready for next step"
+        else -> "Idle"
+    }
+}
+
 private fun releaseSafPermission(context: Context, uri: Uri) {
     runCatching {
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
@@ -1153,10 +1316,13 @@ private fun operationText(operation: PlanOperation): String {
         "set_text" -> "Textfeld ausfüllen: ${operation.targetTextOrHint.orEmpty()}"
         "append_text" -> "Text anfügen: ${operation.targetTextOrHint.orEmpty()}"
         "scroll" -> "Sichtbaren Bereich scrollen"
+        "scroll_forward" -> "Sichtbaren Bereich vorwärts scrollen"
+        "scroll_backward" -> "Sichtbaren Bereich rückwärts scrollen"
         "press_back" -> "Zurück drücken"
         "press_home" -> "Home drücken"
         "open_app" -> "Erlaubte App öffnen"
         "wait_for_screen" -> "Auf Bildschirm warten"
+        "wait" -> "Kurz warten"
         "find_node" -> "UI-Element suchen: ${operation.targetTextOrHint ?: operation.text.orEmpty()}"
         "select_option" -> "Option auswählen: ${operation.targetTextOrHint ?: operation.text.orEmpty()}"
         "fill_form" -> "Formular vorbereiten"

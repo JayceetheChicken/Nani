@@ -1,6 +1,8 @@
 package com.nani.agent.executor
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import com.nani.agent.LogStore
 import com.nani.agent.plan.ExecutablePlan
 import com.nani.agent.plan.PlanOperation
@@ -49,6 +51,9 @@ class AgentExecutionController(
         }
 
         if (plan.operations.any { it.op in uiOperationTypes }) {
+            if (plan.operations.all { it.op == PlanOperationType.OpenUrl }) {
+                return@withContext openUrls(plan.operations)
+            }
             return@withContext UiAgentController().execute(
                 actions = plan.operations.mapNotNull { it.toUiAction() },
                 internetConfirmed = internetConfirmed,
@@ -67,11 +72,14 @@ class AgentExecutionController(
             PlanOperationType.SetText -> UiActionType.SetText
             PlanOperationType.AppendText -> UiActionType.AppendText
             PlanOperationType.Scroll -> UiActionType.Scroll
+            PlanOperationType.ScrollForward -> UiActionType.ScrollForward
+            PlanOperationType.ScrollBackward -> UiActionType.ScrollBackward
             PlanOperationType.PressBack -> UiActionType.PressBack
             PlanOperationType.PressHome -> UiActionType.PressHome
             PlanOperationType.OpenApp,
             PlanOperationType.UseApp -> UiActionType.OpenApp
             PlanOperationType.WaitForScreen -> UiActionType.WaitForScreen
+            PlanOperationType.Wait -> UiActionType.Wait
             PlanOperationType.FindNode -> UiActionType.FindNode
             PlanOperationType.SelectOption -> UiActionType.SelectOption
             PlanOperationType.OpenUrl -> UiActionType.OpenUrl
@@ -105,10 +113,13 @@ class AgentExecutionController(
         PlanOperationType.SetText,
         PlanOperationType.AppendText,
         PlanOperationType.Scroll,
+        PlanOperationType.ScrollForward,
+        PlanOperationType.ScrollBackward,
         PlanOperationType.PressBack,
         PlanOperationType.PressHome,
         PlanOperationType.OpenApp,
         PlanOperationType.WaitForScreen,
+        PlanOperationType.Wait,
         PlanOperationType.FindNode,
         PlanOperationType.SelectOption,
         PlanOperationType.OpenUrl,
@@ -120,4 +131,27 @@ class AgentExecutionController(
         PlanOperationType.ClickButtonByText,
         PlanOperationType.SubmitForm
     )
+
+    private fun openUrls(operations: List<PlanOperation>): ActionExecutionResult {
+        val successes = mutableListOf<String>()
+        val failures = mutableListOf<String>()
+        operations.forEach { operation ->
+            val result = runCatching {
+                val url = operation.url ?: error("URL missing.")
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                context.startActivity(intent)
+                LogStore.appendUiAction(context, "open_url", "success")
+                "Opened URL after internet confirmation"
+            }
+            if (result.isSuccess) {
+                successes += result.getOrThrow()
+            } else {
+                failures += "open_url: ${result.exceptionOrNull()?.message ?: "failed"}"
+                LogStore.appendUiAction(context, "open_url", "failed")
+            }
+        }
+        return ActionExecutionResult(successes, failures, emptyList())
+    }
 }

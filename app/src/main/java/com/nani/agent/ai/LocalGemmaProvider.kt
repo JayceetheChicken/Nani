@@ -158,6 +158,7 @@ class LocalGemmaProvider : AiProvider {
             explanation = explanation,
             requiresConfirmation = requiresConfirmation,
             requiresInternetConfirmation = requiresInternetConfirmation,
+            done = actionType == AiAction.Blocked,
             riskLevel = riskLevel,
             proposedJson = proposedJson
         )

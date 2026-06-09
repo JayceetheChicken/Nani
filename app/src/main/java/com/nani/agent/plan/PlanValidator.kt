@@ -9,9 +9,14 @@ object PlanValidator {
     private val secretMarkers = listOf("apikey", "api_key", "password", "token", "secret", "c:\\", "/system", "/data")
     private val forbiddenOperations = setOf(
         "delete_file",
+        "delete",
+        "remove",
+        "trash",
         "move_file",
         "wipe_folder",
+        "wipe",
         "clear_folder",
+        "clear",
         "format_storage",
         "upload_file",
         "download_file",
@@ -77,6 +82,7 @@ object PlanValidator {
 
         when (plan.actionType) {
             AiAction.ReadFiles,
+            AiAction.AgentStep,
             AiAction.WriteFiles,
             AiAction.EditFiles,
             AiAction.OrganizeFiles,
@@ -100,7 +106,7 @@ object PlanValidator {
             errors += "Plan has too many operations. MVP limit is $MAX_OPERATIONS."
         }
         if (plan.operations.isEmpty()) {
-            errors += "Plan has no executable operations."
+            if (!plan.done) errors += "Plan has no executable operations."
         }
 
         val hasWritingOperations = plan.operations.any { it.op.writes }
@@ -197,10 +203,13 @@ object PlanValidator {
             PlanOperationType.UseApp,
             PlanOperationType.ReadScreen,
             PlanOperationType.Scroll,
+            PlanOperationType.ScrollForward,
+            PlanOperationType.ScrollBackward,
             PlanOperationType.PressBack,
             PlanOperationType.PressHome,
             PlanOperationType.OpenApp,
             PlanOperationType.WaitForScreen,
+            PlanOperationType.Wait,
             PlanOperationType.FindNode,
             PlanOperationType.TapNode,
             PlanOperationType.ClickButtonByText,

@@ -33,7 +33,9 @@ class UiActionExecutor(
                     UiActionType.SetFieldByLabel,
                     UiActionType.SetFieldByHint,
                     UiActionType.SetFieldByNodeId -> setText(reader, snapshot, action)
-                    UiActionType.Scroll -> scrollNode(reader, snapshot, action)
+                    UiActionType.Scroll,
+                    UiActionType.ScrollForward -> scrollNode(reader, snapshot, action, forward = true)
+                    UiActionType.ScrollBackward -> scrollNode(reader, snapshot, action, forward = false)
                     UiActionType.PressBack -> {
                         service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
                         "Pressed Back"
@@ -42,7 +44,11 @@ class UiActionExecutor(
                         service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
                         "Pressed Home"
                     }
-                    UiActionType.WaitForScreen -> "Wait requested. Long-running waits are not implemented in this MVP."
+                    UiActionType.WaitForScreen,
+                    UiActionType.Wait -> {
+                        Thread.sleep(500)
+                        "Waited briefly"
+                    }
                     UiActionType.FindNode -> reader.findNode(snapshot, action)?.let { "Found node for ${action.rawOp}" }
                         ?: "Node not found."
                     UiActionType.OpenUrl -> openUrl(action)
@@ -102,13 +108,15 @@ class UiActionExecutor(
         return "Set text in visible field"
     }
 
-    private fun scrollNode(reader: AccessibilityTreeReader, snapshot: ScreenSnapshot?, action: UiAction): String {
+    private fun scrollNode(reader: AccessibilityTreeReader, snapshot: ScreenSnapshot?, action: UiAction, forward: Boolean): String {
         val node = reader.findNode(snapshot, action)
             ?: service.rootInActiveWindow
             ?: error("No scroll target available.")
         val scrollableNode = generateSequence(node) { it.parent }.firstOrNull { it.isScrollable && it.isEnabled }
             ?: error("No scrollable node found.")
-        scrollableNode.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-        return "Scrolled visible container"
+        scrollableNode.performAction(
+            if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        )
+        return if (forward) "Scrolled visible container forward" else "Scrolled visible container backward"
     }
 }

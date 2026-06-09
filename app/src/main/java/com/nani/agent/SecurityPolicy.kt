@@ -6,8 +6,16 @@ import com.nani.agent.policy.AppPolicyDecision
 object SecurityPolicy {
     private val deniedPackageFragments = listOf(
         "settings",
+        "com.android.settings",
+        "android.settings",
         "permissioncontroller",
-        "packageinstaller"
+        "packageinstaller",
+        "installer",
+        "vending",
+        "playstore",
+        "knox",
+        "security",
+        "account"
     )
 
     private val allowedPackageNames = setOf(

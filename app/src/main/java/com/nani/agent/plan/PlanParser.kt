@@ -13,6 +13,7 @@ object PlanParser {
             explanation = plan.explanation,
             requiresConfirmation = plan.requiresConfirmation,
             requiresInternetConfirmation = plan.requiresInternetConfirmation,
+            done = plan.done,
             riskLevel = plan.riskLevel,
             operations = operations,
             proposedJson = plan.proposedJson

@@ -153,6 +153,7 @@ class ApiAiProvider(
             val explanation = json.getString("explanation")
             val requiresConfirmation = json.getBoolean("requiresConfirmation")
             val requiresInternetConfirmation = json.optBoolean("requiresInternetConfirmation", false)
+            val done = json.optBoolean("done", false)
             val proposedJsonValue = json.get("proposedJson")
             val proposedJson = when (proposedJsonValue) {
                 is JSONObject -> proposedJsonValue.toString(2)
@@ -168,6 +169,7 @@ class ApiAiProvider(
                 explanation = explanation,
                 requiresConfirmation = requiresConfirmation,
                 requiresInternetConfirmation = requiresInternetConfirmation,
+                done = done,
                 riskLevel = risk,
                 proposedJson = proposedJson
             )
@@ -182,6 +184,7 @@ class ApiAiProvider(
             explanation = "Deleting files is disabled.",
             requiresConfirmation = false,
             requiresInternetConfirmation = false,
+            done = true,
             riskLevel = AiRiskLevel.High,
             proposedJson = safeJson(
                 actionType = AiAction.Blocked,
@@ -197,6 +200,7 @@ class ApiAiProvider(
             explanation = explanation,
             requiresConfirmation = false,
             requiresInternetConfirmation = false,
+            done = true,
             riskLevel = AiRiskLevel.Low,
             proposedJson = safeJson(
                 actionType = AiAction.AskClarifyingQuestion,
@@ -214,6 +218,7 @@ class ApiAiProvider(
             .put("actionType", actionType.wireName)
             .put("requiresConfirmation", false)
             .put("requiresInternetConfirmation", false)
+            .put("done", actionType == AiAction.Blocked || actionType == AiAction.AskClarifyingQuestion)
             .put("riskLevel", riskLevel.wireName)
             .toString(2)
     }
@@ -232,11 +237,12 @@ class ApiAiProvider(
     }
 
     private val systemPrompt = """
-        You are Nani's planning engine for a local Android agent in a separate Agent user profile.
+        You are Nani's planning engine for a personal Android agent in a separate Agent user profile.
         You return only valid JSON. No markdown. No explanations outside JSON.
         You only propose plans. You do not execute actions and never claim files were changed.
-        Allowed actionType values: read_screen, use_app, use_browser, fill_form, work_on_webpage, read_files, write_files, edit_files, organize_files, ask_confirmation, ask_clarifying_question, blocked.
-        Allowed operation op values inside proposedJson.operations: list_files, read_file, summarize_file, summarize_folder, create_folder, create_file, edit_text_file, append_text_file, copy_file, rename_file, search_files, classify_files, read_screen, tap_node, set_text, append_text, scroll, press_back, press_home, open_app, wait_for_screen, find_node, select_option, open_url, fill_form, set_field_by_label, set_field_by_hint, set_field_by_node_id, click_button_by_text, submit_form.
+        For UI/browser/form tasks, plan exactly one small next step, not a long blind sequence. Use actionType "agent_step" for the next step.
+        Allowed actionType values: agent_step, read_screen, use_app, use_browser, fill_form, work_on_webpage, read_files, write_files, edit_files, organize_files, ask_confirmation, ask_clarifying_question, blocked.
+        Allowed operation op values inside proposedJson.operations: list_files, read_file, summarize_file, summarize_folder, create_folder, create_file, edit_text_file, append_text_file, copy_file, rename_file, search_files, classify_files, read_screen, tap_node, set_text, append_text, scroll_forward, scroll_backward, press_back, press_home, open_app, wait, find_node, select_option, open_url, set_field_by_label, set_field_by_hint, set_field_by_node_id, click_button_by_text.
         You may plan: read screen, use allowed apps, use browser after internet confirmation, read webpages, fill forms, scroll, click visible nodes, enter text, read files, analyze files, create files, edit text files, copy files, rename files, and create folders.
         Never plan: delete_file, move_file, wipe_folder, clear_folder, format_storage, Android Settings, permission changes, app install/uninstall, root, device admin, overlay, main user profile access, banking/payment/auth/password-manager automation, password entry, 2FA entry, captcha solving, purchase/payment/order confirmation, blind clicks, or coordinate-only clicks.
         Browser, web, online services, URL opening, uploads, sharing, messages, email, posts, and cloud actions require requiresInternetConfirmation=true.
@@ -252,6 +258,7 @@ class ApiAiProvider(
           "explanation": "short user-facing explanation",
           "requiresConfirmation": true,
           "requiresInternetConfirmation": false,
+          "done": false,
           "riskLevel": "low|medium|high",
           "proposedJson": {
             "operations": [
@@ -270,14 +277,15 @@ class ApiAiProvider(
               { "op": "read_screen" },
               { "op": "tap_node", "target": { "textOrHint": "OK" } },
               { "op": "set_text", "target": { "textOrHint": "Search" }, "text": "query" },
-              { "op": "scroll" },
+              { "op": "scroll_forward" },
               { "op": "open_url", "url": "https://example.com", "reason": "Online research" },
               { "op": "set_field_by_label", "label": "Name", "text": "Nils" },
               { "op": "click_button_by_text", "text": "Search" },
-              { "op": "submit_form", "requiresFinalSubmitConfirmation": true }
+              { "op": "click_button_by_text", "text": "Absenden", "requiresFinalSubmitConfirmation": true }
             ]
           }
         }
+        If the goal is complete, return actionType "agent_step", done true, low risk, and no operations.
     """.trimIndent()
 }
 

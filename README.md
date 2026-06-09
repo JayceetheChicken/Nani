@@ -17,6 +17,8 @@ Nani plans through an AI provider, validates every plan locally, shows a preview
 - AccessibilityService stays inactive until manually enabled by the user in Android settings.
 - Accessibility can read the visible screen tree and perform controlled, node-based gestures after local validation.
 - Stop, Pause, Discard, Internet Confirmation, and Final Submit Confirmation controls are visible in the UI.
+- Agent Loop runs one visible step at a time: plan, validate, execute one operation, read the screen again, then continue.
+- Agent Loop has a default max of 20 steps and a 10 second timeout per step.
 
 ## What Nani Can Do
 
@@ -36,6 +38,7 @@ Nani plans through an AI provider, validates every plan locally, shows a preview
 - Scroll visible containers.
 - Open Browser/URLs only after Internet Confirmation.
 - Prepare forms without submitting them.
+- Run a step-by-step personal agent loop for simple app, browser, webpage, and form tasks.
 - Use DeepSeek/OpenAI-compatible/Custom API planning when configured.
 - Use Local Dummy for offline safety tests.
 
@@ -55,6 +58,7 @@ Nani plans through an AI provider, validates every plan locally, shows a preview
 - Use Google Drive.
 - Run a native local model runtime.
 - Perform blind clicks or coordinate-only clicks.
+- Run autonomous background loops without visible controls.
 
 ## UI Agent Safety
 
@@ -68,6 +72,8 @@ Nani reads a shortened `ScreenSnapshot` from Accessibility:
 Text is shortened, password nodes are masked, and logs do not store full screen contents or form values. UI actions must target visible Accessibility nodes. Settings, permission controllers, package installers, app stores, banking, payment, authenticator, password-manager, Knox/security, and account-management screens are blocked by policy.
 
 Allowed UI operations include `read_screen`, `tap_node`, `set_text`, `append_text`, `scroll`, `press_back`, `press_home`, `open_app`, `wait_for_screen`, `find_node`, `select_option`, `open_url`, `set_field_by_label`, `set_field_by_hint`, `set_field_by_node_id`, and `click_button_by_text`.
+
+The Agent Loop asks the AI for only the next small step using `actionType="agent_step"`. Long multi-step UI plans are not executed blindly. After each step, Nani reads the screen again and waits for the next controlled step.
 
 Forbidden UI operations include settings/permission changes, app install/uninstall, payment approval, purchase confirmation, password entry, 2FA entry, captcha solving, file deletion, root, device-admin, and overlay actions.
 
@@ -98,6 +104,8 @@ The user must grant this manually. Nani must not enter Settings or permission-ma
 Normal AI planning through the configured provider is allowed because the user explicitly configures it in AI Settings.
 
 Agent actions that use Browser, URLs, uploads, sharing, messages, email, web search, cloud, posts, or other online services require a separate plan flag and a separate confirmation in the UI before execution can proceed. Without that confirmation, the executor refuses the plan.
+
+`open_url` can open a browser through Android `ACTION_VIEW` after Internet Confirmation even if Accessibility is not ready yet. Reading or operating the webpage after that still requires Accessibility.
 
 ## Example Commands
 
@@ -134,6 +142,14 @@ Lösche alte Dateien
 ```
 
 Deletion requests should be blocked by Nani safety rules. Fallback recognition for `loesche` is also kept.
+
+## MVP Limits
+
+- The loop is not a long-running autonomous background agent.
+- The AI plans one step at a time; the user remains in control with Continue, Pause, Stop, and Discard.
+- Webpage interaction uses Android Accessibility, not perfect DOM automation.
+- Login, password entry, 2FA, TAN, captcha, banking, payment, purchases, bookings, app installs, permission changes, Settings, and file deletion remain blocked.
+- Form fields can be prepared, but sending/submitting requires Final Submit Confirmation.
 
 ## DeepSeek Setup
 
