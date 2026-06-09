@@ -6,6 +6,7 @@ import com.nani.agent.ai.AiAction
 import com.nani.agent.ai.AiPrefs
 import com.nani.agent.ai.AiProviderFactory
 import com.nani.agent.executor.AgentExecutionController
+import com.nani.agent.memory.MemoryStore
 import com.nani.agent.plan.ExecutablePlan
 import com.nani.agent.plan.PlanParser
 import com.nani.agent.plan.PlanValidator
@@ -195,6 +196,8 @@ class AgentLoopController(
 
             Current shortened screen snapshot:
             ${screenSummary ?: "No Accessibility screen snapshot available."}
+
+            ${MemoryStore.buildMemoryContext(context)}
         """.trimIndent()
     }
 

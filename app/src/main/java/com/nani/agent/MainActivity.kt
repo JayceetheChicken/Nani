@@ -351,7 +351,7 @@ private fun MainScreen() {
                             executionStopped = false
                             val settings = AiPrefs.load(context)
                             val provider = AiProviderFactory.create(settings)
-                            val plan = provider.generatePlan(commandText)
+                            val plan = provider.generatePlan(withMemoryContext(context, commandText))
                             if (plan.actionType == AiAction.AskClarifyingQuestion) {
                                 commandMessage = plan.explanation
                                 aiPlan = null
@@ -1352,6 +1352,15 @@ private fun providerLogName(settings: AiSettings): String {
         AiPrefs.PROVIDER_LOCAL_DUMMY_GEMMA -> "local_dummy_gemma"
         else -> "unknown"
     }
+}
+
+private fun withMemoryContext(context: Context, command: String): String {
+    return """
+        ${MemoryStore.buildMemoryContext(context)}
+
+        User command:
+        $command
+    """.trimIndent()
 }
 
 private fun shortUri(uri: Uri?): String {
