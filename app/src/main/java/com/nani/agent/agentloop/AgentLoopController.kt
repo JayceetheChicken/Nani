@@ -250,6 +250,7 @@ class AgentLoopController(
             If internet/browser/web is needed, return ask_confirmation with requiresInternetConfirmation=true unless already on a web page and the next visible step is safe.
             Allowed operation op values: open_app, open_url, read_screen, scroll_forward, scroll_backward, tap_node, set_text, wait, press_back, summarize_folder, classify_files, batch_group_files, create_folder, create_file, edit_text_file, append_text_file, copy_file, rename_file, read_file, summarize_file, list_files, search_files, click_button_by_text, set_field_by_label, set_field_by_hint, set_field_by_node_id.
             Opening an app or URL is never task completion. After open_app or open_url, continue with read_screen/wait/tap/scroll/set_text steps until the original goal is completed.
+            Plans containing open_url, click_button_by_text, fill_form, or submit_form must set requiresInternetConfirmation=true. If internetConfirmed is already true, execution may continue after validation.
             Never generate work_on_webpage or vague unsupported operations.
             Never plan Settings, permission changes, app installs, deletion, passwords, PINs, 2FA, TAN, captcha, purchases, payments, or blind coordinate clicks.
 
@@ -271,6 +272,6 @@ class AgentLoopController(
     }
 
     companion object {
-        private const val STEP_TIMEOUT_MS = 10_000L
+        private const val STEP_TIMEOUT_MS = 60_000L
     }
 }

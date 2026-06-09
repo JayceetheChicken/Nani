@@ -28,20 +28,13 @@ class AccessibilityTreeReader(
         val wantedText = action.text ?: target?.textOrHint
         val wantedId = target?.nodeId
         val wantedViewId = target?.viewIdResourceName
-        val queue = ArrayDeque<AccessibilityNodeInfo>()
-        queue.add(root)
-        var index = 0
-        while (queue.isNotEmpty()) {
-            val node = queue.removeFirst()
-            if (wantedId != null && snapshot?.nodes?.getOrNull(wantedId)?.id == index) return node
-            if (!wantedViewId.isNullOrBlank() && node.viewIdResourceName == wantedViewId) return node
-            if (!wantedText.isNullOrBlank() && node.matchesText(wantedText)) return node
-            for (childIndex in 0 until node.childCount) {
-                node.getChild(childIndex)?.let(queue::add)
-            }
-            index += 1
+        var currentIndex = 0
+        return findDepthFirst(root) { node ->
+            val nodeIndex = currentIndex++
+            (wantedId != null && snapshot?.nodes?.getOrNull(wantedId)?.id == nodeIndex) ||
+                (!wantedViewId.isNullOrBlank() && node.viewIdResourceName == wantedViewId) ||
+                (!wantedText.isNullOrBlank() && node.matchesText(wantedText))
         }
-        return null
     }
 
     private fun collect(node: AccessibilityNodeInfo, nodes: MutableList<UiNodeInfo>, maxNodes: Int) {
@@ -65,6 +58,18 @@ class AccessibilityTreeReader(
             node.getChild(index)?.let { collect(it, nodes, maxNodes) }
             if (nodes.size >= maxNodes) return
         }
+    }
+
+    private fun findDepthFirst(
+        node: AccessibilityNodeInfo,
+        predicate: (AccessibilityNodeInfo) -> Boolean
+    ): AccessibilityNodeInfo? {
+        if (predicate(node)) return node
+        for (index in 0 until node.childCount) {
+            val child = node.getChild(index) ?: continue
+            findDepthFirst(child, predicate)?.let { return it }
+        }
+        return null
     }
 
     private fun labelForPackage(context: Context, packageName: String): String? {

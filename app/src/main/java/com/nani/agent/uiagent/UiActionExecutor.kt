@@ -1,14 +1,19 @@
 package com.nani.agent.uiagent
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Path
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.view.accessibility.AccessibilityNodeInfo
 import com.nani.agent.LogStore
 import com.nani.agent.saf.ActionExecutionResult
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 
 class UiActionExecutor(
     private val service: AccessibilityService
@@ -170,12 +175,45 @@ class UiActionExecutor(
         return value.trim().lowercase().replace(Regex("\\s+"), " ")
     }
 
-    private fun clickNode(reader: AccessibilityTreeReader, snapshot: ScreenSnapshot?, action: UiAction): String {
+    private suspend fun clickNode(reader: AccessibilityTreeReader, snapshot: ScreenSnapshot?, action: UiAction): String {
         val node = reader.findNode(snapshot, action) ?: error("Target node not found.")
         val clickableNode = generateSequence(node) { it.parent }.firstOrNull { it.isClickable && it.isEnabled }
-            ?: error("No clickable parent found.")
-        clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        return "Clicked visible node"
+        if (clickableNode != null) {
+            clickableNode.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            return "Clicked visible node"
+        }
+        return tapNodeCenterWithGesture(node)
+    }
+
+    private suspend fun tapNodeCenterWithGesture(node: AccessibilityNodeInfo): String {
+        if (!node.isVisibleToUser || !node.isEnabled) error("Target node is not visibly tappable.")
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        if (rect.width() <= 0 || rect.height() <= 0) error("Target node has no visible bounds.")
+        val x = rect.centerX().toFloat()
+        val y = rect.centerY().toFloat()
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 80))
+            .build()
+        val dispatched = suspendCancellableCoroutine { continuation ->
+            val started = service.dispatchGesture(
+                gesture,
+                object : AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(gestureDescription: GestureDescription?) {
+                        if (continuation.isActive) continuation.resume(true)
+                    }
+
+                    override fun onCancelled(gestureDescription: GestureDescription?) {
+                        if (continuation.isActive) continuation.resume(false)
+                    }
+                },
+                null
+            )
+            if (!started && continuation.isActive) continuation.resume(false)
+        }
+        if (!dispatched) error("Gesture tap was cancelled.")
+        return "Tapped center of visible Accessibility node"
     }
 
     private fun setText(reader: AccessibilityTreeReader, snapshot: ScreenSnapshot?, action: UiAction): String {
