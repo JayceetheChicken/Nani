@@ -3,8 +3,12 @@ package com.nani.agent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.app.AppOpsManager
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.text.TextUtils
 import androidx.activity.ComponentActivity
@@ -55,6 +59,7 @@ import com.nani.agent.plan.PlanOperation
 import com.nani.agent.plan.PlanParser
 import com.nani.agent.plan.PlanValidationResult
 import com.nani.agent.plan.PlanValidator
+import com.nani.agent.plan.PlanValidator.EXECUTION_CHUNK_SIZE
 import com.nani.agent.saf.ActionExecutionResult
 import com.nani.agent.saf.BroadFileRepository
 import com.nani.agent.saf.BroadStorageAccess
@@ -67,6 +72,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicReference
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,6 +81,14 @@ class MainActivity : ComponentActivity() {
             NaniApp()
         }
     }
+}
+
+private enum class ExecutionState {
+    Idle,
+    Running,
+    Paused,
+    Stopped,
+    Complete
 }
 
 @Composable
@@ -110,6 +124,10 @@ private fun MainScreen() {
     var validationResult by remember { mutableStateOf<PlanValidationResult?>(null) }
     var executionResult by remember { mutableStateOf<ActionExecutionResult?>(null) }
     var executionLoading by remember { mutableStateOf(false) }
+    var executionState by remember { mutableStateOf(ExecutionState.Idle) }
+    val executionStateRef = remember { AtomicReference(ExecutionState.Idle) }
+    var executionCurrentOperation by remember { mutableStateOf(0) }
+    var executionTotalOperations by remember { mutableStateOf(0) }
     var internetConfirmed by remember { mutableStateOf(false) }
     var finalSubmitConfirmed by remember { mutableStateOf(false) }
     var executionPaused by remember { mutableStateOf(false) }
@@ -125,6 +143,10 @@ private fun MainScreen() {
     var memoryText by remember { mutableStateOf("") }
     var memories by remember { mutableStateOf(MemoryStore.listMemories(context)) }
     var memoryMessage by remember { mutableStateOf<String?>(null) }
+    var mediaProjectionGranted by remember { mutableStateOf(false) }
+    var notificationAccessEnabled by remember { mutableStateOf(isNotificationAccessEnabled(context)) }
+    var usageAccessEnabled by remember { mutableStateOf(isUsageAccessEnabled(context)) }
+    var ignoringBatteryOptimizations by remember { mutableStateOf(isIgnoringBatteryOptimizations(context)) }
     var logs by remember { mutableStateOf(LogStore.readRecent(context, limit = 50)) }
 
     val openTreeLauncher = rememberLauncherForActivityResult(
@@ -149,6 +171,12 @@ private fun MainScreen() {
         }
     }
 
+    val mediaProjectionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        mediaProjectionGranted = result.resultCode == android.app.Activity.RESULT_OK && result.data != null
+    }
+
     LaunchedEffect(Unit) {
         while (true) {
             accessibilityEnabled = isAccessibilityServiceEnabled(context)
@@ -156,6 +184,9 @@ private fun MainScreen() {
             guardEnabled = AgentPrefs.isGuardEnabled(context)
             broadStorageGranted = BroadStorageAccess.isGranted()
             screenSnapshot = ScreenStateStore.latest()
+            notificationAccessEnabled = isNotificationAccessEnabled(context)
+            usageAccessEnabled = isUsageAccessEnabled(context)
+            ignoringBatteryOptimizations = isIgnoringBatteryOptimizations(context)
             logs = LogStore.readRecent(context, limit = 50)
             delay(1_000)
         }
@@ -210,6 +241,32 @@ private fun MainScreen() {
         } else if (!guardEnabled) {
             WarningCard("Nani Guard is disabled. Nani is logging only and will not block protected screens.")
         }
+
+        AgentFullAccessSetupCard(
+            accessibilityEnabled = accessibilityEnabled,
+            mediaProjectionGranted = mediaProjectionGranted,
+            workFolder = shortUri(workFolderUri),
+            notificationAccessEnabled = notificationAccessEnabled,
+            usageAccessEnabled = usageAccessEnabled,
+            ignoringBatteryOptimizations = ignoringBatteryOptimizations,
+            onOpenAccessibilitySettings = {
+                context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            },
+            onRequestMediaProjection = {
+                val manager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+                mediaProjectionLauncher.launch(manager.createScreenCaptureIntent())
+            },
+            onSelectWorkFolder = { openTreeLauncher.launch(null) },
+            onOpenNotificationSettings = {
+                context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+            },
+            onOpenUsageAccessSettings = {
+                context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+            },
+            onRequestBatteryOptimizationIgnore = {
+                requestIgnoreBatteryOptimizations(context)
+            }
+        )
 
         WorkFolderCard(
             rootUri = workFolderUri,
@@ -441,6 +498,9 @@ private fun MainScreen() {
             finalSubmitConfirmed = finalSubmitConfirmed,
             executionPaused = executionPaused,
             executionStopped = executionStopped,
+            executionState = executionState,
+            currentOperation = executionCurrentOperation,
+            totalOperations = executionTotalOperations,
             isExecuting = executionLoading,
             jsonVisible = planJsonVisible,
             onAllowInternet = {
@@ -474,10 +534,16 @@ private fun MainScreen() {
                 finalSubmitConfirmed = false
                 executionPaused = false
                 executionStopped = false
+                executionState = ExecutionState.Idle
+                executionStateRef.set(ExecutionState.Idle)
+                executionCurrentOperation = 0
+                executionTotalOperations = 0
                 planJsonVisible = false
             },
             onPause = {
                 executionPaused = true
+                executionState = ExecutionState.Paused
+                executionStateRef.set(ExecutionState.Paused)
                 executionResult = ActionExecutionResult(
                     successes = emptyList(),
                     failures = emptyList(),
@@ -487,6 +553,8 @@ private fun MainScreen() {
             onStop = {
                 executionStopped = true
                 executionLoading = false
+                executionState = ExecutionState.Stopped
+                executionStateRef.set(ExecutionState.Stopped)
                 executionResult = ActionExecutionResult(
                     successes = emptyList(),
                     failures = listOf("Execution stopped by user."),
@@ -498,24 +566,39 @@ private fun MainScreen() {
             onExecute = {
                 val executable = executablePlan ?: return@PlanPreviewCard
                 executionPaused = false
+                executionStopped = false
+                executionState = ExecutionState.Running
+                executionStateRef.set(ExecutionState.Running)
                 val validation = PlanValidator.validate(
                     plan = executable,
                     hasWorkFolder = hasFileRoot(workFolderUri, broadStorageGranted),
                     internetConfirmed = internetConfirmed
                 )
                 validationResult = validation
-                if (validation.canExecute && !executionStopped) {
+                if (validation.canExecute && executionStateRef.get() == ExecutionState.Running) {
                     coroutineScope.launch {
                         executionLoading = true
                         try {
-                            executionResult = AgentExecutionController(context).execute(
+                            executionTotalOperations = executable.operations.size
+                            executionResult = executePlanInChunks(
+                                context = context,
                                 plan = executable,
                                 internetConfirmed = internetConfirmed,
-                                finalSubmitConfirmed = finalSubmitConfirmed
+                                finalSubmitConfirmed = finalSubmitConfirmed,
+                                stateRef = executionStateRef,
+                                onProgress = { current, total ->
+                                    executionCurrentOperation = current
+                                    executionTotalOperations = total
+                                }
                             )
+                            executionState = executionStateRef.get()
                             screenSnapshot = ScreenStateStore.latest()
                             logs = LogStore.readRecent(context, limit = 50)
                         } finally {
+                            if (executionStateRef.get() == ExecutionState.Running) {
+                                executionStateRef.set(ExecutionState.Complete)
+                                executionState = ExecutionState.Complete
+                            }
                             executionLoading = false
                         }
                     }
@@ -660,6 +743,95 @@ private fun ScreenCard(
             if (message != null) {
                 Text(message, style = MaterialTheme.typography.bodySmall)
             }
+        }
+    }
+}
+
+@Composable
+private fun AgentFullAccessSetupCard(
+    accessibilityEnabled: Boolean,
+    mediaProjectionGranted: Boolean,
+    workFolder: String,
+    notificationAccessEnabled: Boolean,
+    usageAccessEnabled: Boolean,
+    ignoringBatteryOptimizations: Boolean,
+    onOpenAccessibilitySettings: () -> Unit,
+    onRequestMediaProjection: () -> Unit,
+    onSelectWorkFolder: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
+    onOpenUsageAccessSettings: () -> Unit,
+    onRequestBatteryOptimizationIgnore: () -> Unit
+) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "Agent Full Access Setup",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            SetupRow(
+                title = "Accessibility Service",
+                status = if (accessibilityEnabled) "Enabled" else "Not enabled",
+                description = "Allows Nani to read UI elements, tap, scroll, go back, and interact with other apps.",
+                buttonText = "Open Accessibility Settings",
+                onClick = onOpenAccessibilitySettings
+            )
+            SetupRow(
+                title = "Screen Capture / MediaProjection",
+                status = if (mediaProjectionGranted) "Granted for this session" else "Not granted",
+                description = "Used later for screenshot/OCR based screen understanding.",
+                buttonText = "Request Screen Capture",
+                onClick = onRequestMediaProjection
+            )
+            SetupRow(
+                title = "Work Folder Permission",
+                status = workFolder,
+                description = "Required before executing file operations. Uses Android folder picker and persisted read/write access.",
+                buttonText = "Select work folder",
+                onClick = onSelectWorkFolder
+            )
+            SetupRow(
+                title = "Notification Access",
+                status = if (notificationAccessEnabled) "Enabled" else "Not enabled",
+                description = "Lets Nani observe notifications later if you explicitly enable Android's notification listener access.",
+                buttonText = "Open Notification Settings",
+                onClick = onOpenNotificationSettings
+            )
+            SetupRow(
+                title = "Usage Access",
+                status = if (usageAccessEnabled) "Enabled" else "Not enabled",
+                description = "Lets Nani understand foreground app usage if manually enabled.",
+                buttonText = "Open Usage Access Settings",
+                onClick = onOpenUsageAccessSettings
+            )
+            SetupRow(
+                title = "Ignore Battery Optimization",
+                status = if (ignoringBatteryOptimizations) "Ignoring optimization" else "Not ignored",
+                description = "Samsung/Android may otherwise stop the agent in the background.",
+                buttonText = "Request Battery Exemption",
+                onClick = onRequestBatteryOptimizationIgnore
+            )
+        }
+    }
+}
+
+@Composable
+private fun SetupRow(
+    title: String,
+    status: String,
+    description: String,
+    buttonText: String,
+    onClick: () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(title, fontWeight = FontWeight.SemiBold)
+        Text("Status: $status", style = MaterialTheme.typography.bodySmall)
+        Text(description, style = MaterialTheme.typography.bodySmall)
+        Button(onClick = onClick) {
+            Text(buttonText)
         }
     }
 }
@@ -853,6 +1025,9 @@ private fun PlanPreviewCard(
     finalSubmitConfirmed: Boolean,
     executionPaused: Boolean,
     executionStopped: Boolean,
+    executionState: ExecutionState,
+    currentOperation: Int,
+    totalOperations: Int,
     isExecuting: Boolean,
     jsonVisible: Boolean,
     onAllowInternet: () -> Unit,
@@ -882,6 +1057,10 @@ private fun PlanPreviewCard(
             Text("Requires confirmation: ${plan.requiresConfirmation}")
             Text("Requires internet confirmation: ${plan.requiresInternetConfirmation}")
             Text("Requires final submit confirmation: ${validationResult?.requiresFinalSubmitConfirmation == true}")
+            Text("Execution state: $executionState")
+            if (totalOperations > 0) {
+                Text("Progress: $currentOperation / $totalOperations")
+            }
             Text(plan.explanation)
             if (plan.actionType == AiAction.Blocked) {
                 Text(
@@ -923,7 +1102,7 @@ private fun PlanPreviewCard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Button(onClick = onExecute, enabled = canExecute && !isExecuting && !executionStopped) {
-                    Text(if (isExecuting) "Ausführen..." else "Ausführen")
+                    Text(if (executionPaused) "Resume" else if (isExecuting) "Ausführen..." else "Ausführen")
                 }
                 Button(onClick = onPause, enabled = !executionPaused && !executionStopped) {
                     Text("Pause")
@@ -994,12 +1173,15 @@ private fun FinalSubmitConfirmationCard(
 @Composable
 private fun OperationList(operations: List<PlanOperation>) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text("Geplante Operationen", fontWeight = FontWeight.SemiBold)
+        Text("Geplante Operationen (${operations.size})", fontWeight = FontWeight.SemiBold)
         if (operations.isEmpty()) {
             Text("Keine Dateioperationen geplant.")
         } else {
-            operations.forEachIndexed { index, operation ->
+            operations.take(PlanValidator.PREVIEW_OPERATION_LIMIT).forEachIndexed { index, operation ->
                 Text("${index + 1}. ${operationText(operation)}")
+            }
+            if (operations.size > PlanValidator.PREVIEW_OPERATION_LIMIT) {
+                Text("Showing first ${PlanValidator.PREVIEW_OPERATION_LIMIT} operations. Remaining operations will run in chunks.")
             }
         }
     }
@@ -1344,6 +1526,46 @@ private fun isAccessibilityServiceEnabled(context: Context): Boolean {
     return splitter.any { it.equals(expected, ignoreCase = true) }
 }
 
+private fun isNotificationAccessEnabled(context: Context): Boolean {
+    val enabledListeners = Settings.Secure.getString(
+        context.contentResolver,
+        "enabled_notification_listeners"
+    ).orEmpty()
+    return enabledListeners.contains(context.packageName, ignoreCase = true)
+}
+
+private fun isUsageAccessEnabled(context: Context): Boolean {
+    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+    val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        appOps.unsafeCheckOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            android.os.Process.myUid(),
+            context.packageName
+        )
+    } else {
+        @Suppress("DEPRECATION")
+        appOps.checkOpNoThrow(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            android.os.Process.myUid(),
+            context.packageName
+        )
+    }
+    return mode == AppOpsManager.MODE_ALLOWED
+}
+
+private fun isIgnoringBatteryOptimizations(context: Context): Boolean {
+    val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+    return powerManager.isIgnoringBatteryOptimizations(context.packageName)
+}
+
+private fun requestIgnoreBatteryOptimizations(context: Context) {
+    if (isIgnoringBatteryOptimizations(context)) return
+    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+        data = Uri.parse("package:${context.packageName}")
+    }
+    context.startActivity(intent)
+}
+
 private fun providerLogName(settings: AiSettings): String {
     return when (settings.providerType) {
         AiPrefs.PROVIDER_DEEPSEEK_API -> "deepseek_api"
@@ -1361,6 +1583,59 @@ private fun withMemoryContext(context: Context, command: String): String {
         User command:
         $command
     """.trimIndent()
+}
+
+private suspend fun executePlanInChunks(
+    context: Context,
+    plan: ExecutablePlan,
+    internetConfirmed: Boolean,
+    finalSubmitConfirmed: Boolean,
+    stateRef: AtomicReference<ExecutionState>,
+    onProgress: (Int, Int) -> Unit
+): ActionExecutionResult {
+    val total = plan.operations.size
+    if (total == 0) {
+        onProgress(0, 0)
+        return AgentExecutionController(context).execute(plan, internetConfirmed, finalSubmitConfirmed)
+    }
+
+    val successes = mutableListOf<String>()
+    val failures = mutableListOf<String>()
+    val warnings = mutableListOf<String>()
+    var completed = 0
+    onProgress(completed, total)
+
+    plan.operations.chunked(EXECUTION_CHUNK_SIZE).forEach { chunk ->
+        when (stateRef.get()) {
+            ExecutionState.Running -> Unit
+            ExecutionState.Paused -> {
+                warnings += "Execution paused at operation $completed of $total."
+                return ActionExecutionResult(successes, failures, warnings)
+            }
+            ExecutionState.Stopped -> {
+                failures += "Execution stopped at operation $completed of $total."
+                return ActionExecutionResult(successes, failures, warnings)
+            }
+            else -> {
+                failures += "Execution refused because state is ${stateRef.get()}."
+                return ActionExecutionResult(successes, failures, warnings)
+            }
+        }
+
+        val result = AgentExecutionController(context).execute(
+            plan = plan.copy(operations = chunk),
+            internetConfirmed = internetConfirmed,
+            finalSubmitConfirmed = finalSubmitConfirmed
+        )
+        successes += result.successes
+        failures += result.failures
+        warnings += result.warnings
+        completed += chunk.size
+        onProgress(completed, total)
+        if (result.failures.isNotEmpty()) return ActionExecutionResult(successes, failures, warnings)
+    }
+
+    return ActionExecutionResult(successes, failures, warnings)
 }
 
 private fun shortUri(uri: Uri?): String {
@@ -1404,6 +1679,7 @@ private fun operationText(operation: PlanOperation): String {
         "summarize_file" -> "Datei zusammenfassen: ${operation.path.orEmpty()}"
         "summarize_folder" -> "Arbeitsordner zusammenfassen"
         "search_files" -> "Dateien suchen: ${operation.query.orEmpty()}"
+        "batch_group_files" -> "Dateien in Gruppen vorschlagen"
         "classify_files" -> "Dateien klassifizieren"
         "create_folder" -> "Ordner erstellen: ${operation.path.orEmpty()}"
         "create_file" -> "Datei erstellen: ${operation.path.orEmpty()}"

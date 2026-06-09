@@ -14,7 +14,6 @@ enum class AiAction(val wireName: String) {
     AgentStep("agent_step"),
     ReadScreen("read_screen"),
     FillForm("fill_form"),
-    WorkOnWebpage("work_on_webpage"),
     ReadFiles("read_files"),
     WriteFiles("write_files"),
     EditFiles("edit_files"),

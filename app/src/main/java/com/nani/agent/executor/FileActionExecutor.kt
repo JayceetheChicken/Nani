@@ -61,6 +61,8 @@ class FileActionExecutor(
                         ?: broadRepository!!.summarizeFolder().format()
                     PlanOperationType.SearchFiles -> safRepository?.searchFiles(operation.query.orEmpty())?.formatList("Matches")
                         ?: broadRepository!!.searchFiles(operation.query.orEmpty()).formatList("Matches")
+                    PlanOperationType.BatchGroupFiles -> safRepository?.classifyFiles()?.formatList("Suggested groups")
+                        ?: broadRepository!!.classifyFiles().formatList("Suggested groups")
                     PlanOperationType.ClassifyFiles -> safRepository?.classifyFiles()?.formatList("Classifications")
                         ?: broadRepository!!.classifyFiles().formatList("Classifications")
                     PlanOperationType.CreateFolder -> safRepository?.createFolder(requireNotNull(operation.path))

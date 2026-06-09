@@ -38,6 +38,7 @@ enum class PlanOperationType(val wireName: String, val writes: Boolean, val uses
     SummarizeFile("summarize_file", writes = false),
     SearchFiles("search_files", writes = false),
     ClassifyFiles("classify_files", writes = false),
+    BatchGroupFiles("batch_group_files", writes = false),
     CreateFolder("create_folder", writes = true),
     CreateFile("create_file", writes = true),
     EditTextFile("edit_text_file", writes = true),
@@ -71,7 +72,21 @@ enum class PlanOperationType(val wireName: String, val writes: Boolean, val uses
 
     companion object {
         fun fromWireName(value: String): PlanOperationType? {
-            return entries.firstOrNull { it.wireName == value }
+            val normalized = value.lowercase()
+            return when (normalized) {
+                "open_url" -> OpenUrl
+                "read_screen" -> ReadScreen
+                "scroll", "scroll_forward" -> ScrollForward
+                "scroll_backward" -> ScrollBackward
+                "tap", "tap_node" -> TapNode
+                "type_text", "set_text" -> SetText
+                "wait" -> Wait
+                "press_back" -> PressBack
+                "summarize", "summarize_folder" -> SummarizeFolder
+                "ask_confirmation" -> Unsupported
+                "batch_group_files" -> BatchGroupFiles
+                else -> entries.firstOrNull { it.wireName == normalized }
+            }
         }
     }
 }

@@ -10,7 +10,6 @@ object NetworkPolicy {
         "share_file",
         "send_message",
         "send_email",
-        "work_on_webpage",
         "fill_form",
         "submit_form",
         "click_button_by_text"

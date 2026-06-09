@@ -5,7 +5,9 @@ import com.nani.agent.ai.AiRiskLevel
 import com.nani.agent.policy.NetworkPolicy
 
 object PlanValidator {
-    private const val MAX_OPERATIONS = 50
+    const val MAX_OPERATIONS = 1000
+    const val PREVIEW_OPERATION_LIMIT = 50
+    const val EXECUTION_CHUNK_SIZE = 25
     private val secretMarkers = listOf("apikey", "api_key", "password", "token", "secret", "c:\\", "/system", "/data")
     private val forbiddenOperations = setOf(
         "delete_file",
@@ -62,6 +64,7 @@ object PlanValidator {
         PlanOperationType.ReadFile,
         PlanOperationType.SummarizeFile,
         PlanOperationType.SearchFiles,
+        PlanOperationType.BatchGroupFiles,
         PlanOperationType.ClassifyFiles,
         PlanOperationType.CreateFolder,
         PlanOperationType.CreateFile,
@@ -90,7 +93,6 @@ object PlanValidator {
             AiAction.UseApp,
             AiAction.UseBrowser,
             AiAction.FillForm,
-            AiAction.WorkOnWebpage,
             AiAction.AskConfirmation -> Unit
             AiAction.AskClarifyingQuestion -> {
                 errors += "Clarifying-question plans cannot be executed."
@@ -173,6 +175,7 @@ object PlanValidator {
             PlanOperationType.ListFiles,
             PlanOperationType.SummarizeFolder,
             PlanOperationType.SearchFiles,
+            PlanOperationType.BatchGroupFiles,
             PlanOperationType.ClassifyFiles -> Unit
             PlanOperationType.ReadFile,
             PlanOperationType.SummarizeFile -> {

@@ -241,12 +241,14 @@ class ApiAiProvider(
         You return only valid JSON. No markdown. No explanations outside JSON.
         You only propose plans. You do not execute actions and never claim files were changed.
         For UI/browser/form tasks, plan exactly one small next step, not a long blind sequence. Use actionType "agent_step" for the next step.
-        Allowed actionType values: agent_step, read_screen, use_app, use_browser, fill_form, work_on_webpage, read_files, write_files, edit_files, organize_files, ask_confirmation, ask_clarifying_question, blocked.
-        Allowed operation op values inside proposedJson.operations: list_files, read_file, summarize_file, summarize_folder, create_folder, create_file, edit_text_file, append_text_file, copy_file, rename_file, search_files, classify_files, read_screen, tap_node, set_text, append_text, scroll_forward, scroll_backward, press_back, press_home, open_app, wait, find_node, select_option, open_url, set_field_by_label, set_field_by_hint, set_field_by_node_id, click_button_by_text.
+        Allowed actionType values: agent_step, read_screen, use_app, use_browser, fill_form, read_files, write_files, edit_files, organize_files, ask_confirmation, ask_clarifying_question, blocked.
+        Allowed operation op values inside proposedJson.operations: open_url, read_screen, scroll_forward, scroll_backward, tap_node, set_text, wait, press_back, summarize_folder, classify_files, batch_group_files.
         You may plan: read screen, use allowed apps, use browser after internet confirmation, read webpages, fill forms, scroll, click visible nodes, enter text, read files, analyze files, create files, edit text files, copy files, rename files, and create folders.
         Never plan: delete_file, move_file, wipe_folder, clear_folder, format_storage, Android Settings, permission changes, app install/uninstall, root, device admin, overlay, main user profile access, banking/payment/auth/password-manager automation, password entry, 2FA entry, captcha solving, purchase/payment/order confirmation, blind clicks, or coordinate-only clicks.
         Browser, web, online services, URL opening, uploads, sharing, messages, email, posts, and cloud actions require requiresInternetConfirmation=true.
         If a form should be submitted, return actionType "ask_confirmation" and set requiresFinalSubmitConfirmation=true on the submit/click operation.
+        For file sorting tasks, prefer one batch_group_files operation instead of generating one operation per file.
+        Do not plan deletion of original files.
         If a password, PIN, TAN, 2FA, captcha, credit-card, IBAN, ID, or health field is visible or requested, do not fill it; ask a clarifying question or block.
         If Internet is needed, set requiresInternetConfirmation=true, explain why, and include target URL/app/reason when known.
         If the user asks for delete/settings/permission/app install/root/admin/overlay/main-profile actions, return actionType "blocked", riskLevel "high", requiresConfirmation false, requiresInternetConfirmation false.
@@ -254,7 +256,7 @@ class ApiAiProvider(
         If information is missing, return actionType "ask_clarifying_question", riskLevel "low", requiresConfirmation false.
         JSON schema:
         {
-          "actionType": "read_screen|use_app|use_browser|fill_form|work_on_webpage|read_files|write_files|edit_files|organize_files|ask_confirmation|ask_clarifying_question|blocked",
+          "actionType": "agent_step|read_screen|use_app|use_browser|fill_form|read_files|write_files|edit_files|organize_files|ask_confirmation|ask_clarifying_question|blocked",
           "explanation": "short user-facing explanation",
           "requiresConfirmation": true,
           "requiresInternetConfirmation": false,
