@@ -36,6 +36,28 @@ object LogStore {
         appendLine(context, "${Instant.now()} ui_action operation=$operation result=$result")
     }
 
+    fun appendAgentLoopStep(
+        context: Context,
+        stepNumber: Int,
+        foregroundBefore: String,
+        action: String,
+        result: String,
+        foregroundAfter: String,
+        stopReason: String
+    ) {
+        appendLine(
+            context,
+            "${Instant.now()} agent_loop_step step=$stepNumber foreground_before=$foregroundBefore action=$action result=$result foreground_after=$foregroundAfter stop_reason=$stopReason"
+        )
+    }
+
+    fun appendScreenSummary(context: Context, foregroundPackage: String, nodeCount: Int, summary: String) {
+        appendLine(
+            context,
+            "${Instant.now()} screen_summary foreground=$foregroundPackage nodes=$nodeCount summary=${summary.lineSequence().firstOrNull().orEmpty().take(120)}"
+        )
+    }
+
     fun readRecent(context: Context, limit: Int = 80): List<String> {
         val file = logFile(context)
         if (!file.exists()) return emptyList()

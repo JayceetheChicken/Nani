@@ -30,6 +30,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,9 +47,10 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.nani.agent.agent.NaniAccessibilityService
-import com.nani.agent.agentloop.AgentLoopController
+import com.nani.agent.agentloop.AgentForegroundService
 import com.nani.agent.agentloop.AgentLoopState
 import com.nani.agent.agentloop.AgentStopReason
+import com.nani.agent.agentloop.AgentRuntimeState
 import com.nani.agent.ai.AiAction
 import com.nani.agent.ai.AiPlan
 import com.nani.agent.ai.AiPrefs
@@ -143,8 +145,8 @@ private fun MainScreen() {
     var screenSnapshot by remember { mutableStateOf(ScreenStateStore.latest()) }
     var screenMessage by remember { mutableStateOf<String?>(null) }
     var agentLoopState by remember { mutableStateOf(AgentLoopState()) }
+    val runtimeSnapshot by AgentRuntimeState.state.collectAsState()
     var agentLoopLoading by remember { mutableStateOf(false) }
-    val agentLoopRunStateRef = remember { AtomicReference(ExecutionState.Idle) }
     var memoryText by remember { mutableStateOf("") }
     var memories by remember { mutableStateOf(MemoryStore.listMemories(context)) }
     var memoryMessage by remember { mutableStateOf<String?>(null) }
@@ -384,29 +386,11 @@ private fun MainScreen() {
                 if (commandText.isBlank()) {
                     commandMessage = "Please enter a command first."
                 } else {
-                    coroutineScope.launch {
-                        agentLoopLoading = true
-                        commandMessage = null
-                        agentLoopRunStateRef.set(ExecutionState.Running)
-                        agentLoopState = AgentLoopState(goal = commandText, running = true)
-                        try {
-                            runAgentLoopUntilStop(
-                                context = context,
-                                initialState = agentLoopState,
-                                goal = commandText,
-                                internetConfirmed = internetConfirmed,
-                                finalSubmitConfirmed = finalSubmitConfirmed,
-                                stateRef = agentLoopRunStateRef,
-                                onState = { agentLoopState = it },
-                                onAfterStep = {
-                                    screenSnapshot = ScreenStateStore.latest()
-                                    logs = LogStore.readRecent(context, limit = 50)
-                                }
-                            )
-                        } finally {
-                            agentLoopLoading = false
-                        }
-                    }
+                    commandMessage = null
+                    agentLoopLoading = true
+                    startAgentService(context, commandText, internetConfirmed, finalSubmitConfirmed)
+                    agentLoopLoading = false
+                    logs = LogStore.readRecent(context, limit = 50)
                 }
             },
             onGeneratePlan = {
@@ -475,48 +459,27 @@ private fun MainScreen() {
         )
 
         AgentLoopCard(
-            state = agentLoopState,
-            isLoading = agentLoopLoading,
+            state = runtimeSnapshot.loopState,
+            isLoading = runtimeSnapshot.serviceRunning || agentLoopLoading,
             internetConfirmed = internetConfirmed,
             finalSubmitConfirmed = finalSubmitConfirmed,
             onAllowInternet = { internetConfirmed = true },
             onAllowFinalSubmit = { finalSubmitConfirmed = true },
             onContinue = {
-                val goal = agentLoopState.goal.ifBlank { commandText }
-                coroutineScope.launch {
-                    agentLoopLoading = true
-                    agentLoopRunStateRef.set(ExecutionState.Running)
-                    try {
-                        runAgentLoopUntilStop(
-                            context = context,
-                            initialState = agentLoopState.copy(running = true, paused = false, stopped = false),
-                            goal = goal,
-                            internetConfirmed = internetConfirmed,
-                            finalSubmitConfirmed = finalSubmitConfirmed,
-                            stateRef = agentLoopRunStateRef,
-                            onState = { agentLoopState = it },
-                            onAfterStep = {
-                                screenSnapshot = ScreenStateStore.latest()
-                                logs = LogStore.readRecent(context, limit = 50)
-                            }
-                        )
-                    } finally {
-                        agentLoopLoading = false
-                    }
-                }
+                val goal = runtimeSnapshot.loopState.goal.ifBlank { commandText }
+                startAgentService(context, goal, internetConfirmed, finalSubmitConfirmed)
+                logs = LogStore.readRecent(context, limit = 50)
             },
             onPause = {
-                agentLoopRunStateRef.set(ExecutionState.Paused)
-                agentLoopState = AgentLoopController(context).pause(agentLoopState)
+                controlAgentService(context, AgentForegroundService.ACTION_PAUSE)
                 logs = LogStore.readRecent(context, limit = 50)
             },
             onStop = {
-                agentLoopRunStateRef.set(ExecutionState.Stopped)
-                agentLoopState = AgentLoopController(context).stop(agentLoopState)
+                controlAgentService(context, AgentForegroundService.ACTION_STOP)
                 logs = LogStore.readRecent(context, limit = 50)
             },
             onDiscard = {
-                agentLoopState = AgentLoopController(context).discard()
+                controlAgentService(context, AgentForegroundService.ACTION_DISCARD)
                 internetConfirmed = false
                 finalSubmitConfirmed = false
             }
@@ -1523,7 +1486,7 @@ private fun SecurityRulesCard() {
             Text("SAF Workspace is recommended. Broad Agent Storage is optional and must be granted manually by the user.")
             Text("Allowed UI actions are constrained to validated plans such as read_screen, tap_node, set_text, scroll, press_back, and open_url.")
             Text("Browser and internet actions require separate confirmation and are not executed blindly.")
-            Text("Google Drive, native inference runtime, app install/uninstall, deletion, and unrestricted Accessibility automation are not included.")
+            Text("Google Drive API sync, native inference runtime, app install/uninstall, deletion, and unrestricted Accessibility automation are not included.")
         }
     }
 }
@@ -1676,58 +1639,30 @@ private suspend fun executePlanInChunks(
     return ActionExecutionResult(successes, failures, warnings)
 }
 
-private suspend fun runAgentLoopUntilStop(
+private fun startAgentService(
     context: Context,
-    initialState: AgentLoopState,
     goal: String,
     internetConfirmed: Boolean,
-    finalSubmitConfirmed: Boolean,
-    stateRef: AtomicReference<ExecutionState>,
-    onState: (AgentLoopState) -> Unit,
-    onAfterStep: () -> Unit
+    finalSubmitConfirmed: Boolean
 ) {
-    val controller = AgentLoopController(context)
-    var current = initialState.copy(goal = goal, running = true, paused = false, stopped = false)
-    onState(current)
-
-    while (
-        stateRef.get() == ExecutionState.Running &&
-        current.running &&
-        !current.paused &&
-        !current.stopped &&
-        current.stepCount < current.maxSteps
-    ) {
-        current = controller.runNextStep(
-            previous = current,
-            goal = goal,
-            internetConfirmed = internetConfirmed,
-            finalSubmitConfirmed = finalSubmitConfirmed
-        )
-        onState(current)
-        onAfterStep()
-
-        if (
-            stateRef.get() != ExecutionState.Running ||
-            !current.running ||
-            current.paused ||
-            current.stopped ||
-            current.stopReason != AgentStopReason.None
-        ) {
-            break
-        }
-
-        var waitedMillis = 0
-        while (waitedMillis < 2_500 && stateRef.get() == ExecutionState.Running) {
-            delay(100)
-            waitedMillis += 100
-        }
+    val intent = Intent(context, AgentForegroundService::class.java).apply {
+        action = AgentForegroundService.ACTION_START
+        putExtra(AgentForegroundService.EXTRA_GOAL, goal)
+        putExtra(AgentForegroundService.EXTRA_INTERNET_CONFIRMED, internetConfirmed)
+        putExtra(AgentForegroundService.EXTRA_FINAL_SUBMIT_CONFIRMED, finalSubmitConfirmed)
     }
-
-    when (stateRef.get()) {
-        ExecutionState.Paused -> onState(controller.pause(current))
-        ExecutionState.Stopped -> onState(controller.stop(current))
-        else -> Unit
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        context.startForegroundService(intent)
+    } else {
+        context.startService(intent)
     }
+}
+
+private fun controlAgentService(context: Context, actionName: String) {
+    val intent = Intent(context, AgentForegroundService::class.java).apply {
+        action = actionName
+    }
+    context.startService(intent)
 }
 
 private fun shortUri(uri: Uri?): String {

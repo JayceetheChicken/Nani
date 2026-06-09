@@ -6,11 +6,12 @@ import android.net.Uri
 import android.view.accessibility.AccessibilityNodeInfo
 import com.nani.agent.LogStore
 import com.nani.agent.saf.ActionExecutionResult
+import kotlinx.coroutines.delay
 
 class UiActionExecutor(
     private val service: AccessibilityService
 ) {
-    fun execute(actions: List<UiAction>, internetConfirmed: Boolean, finalSubmitConfirmed: Boolean): ActionExecutionResult {
+    suspend fun execute(actions: List<UiAction>, internetConfirmed: Boolean, finalSubmitConfirmed: Boolean): ActionExecutionResult {
         val snapshot = AccessibilityTreeReader(service).readCurrentScreen()
         val validation = UiActionValidator.validate(snapshot, actions, internetConfirmed, finalSubmitConfirmed)
         if (!validation.canExecute) {
@@ -70,22 +71,26 @@ class UiActionExecutor(
         return ActionExecutionResult(successes, failures, validation.warnings)
     }
 
-    private fun openUrl(action: UiAction): String {
+    private suspend fun openUrl(action: UiAction): String {
         val url = action.url ?: error("URL missing.")
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         service.startActivity(intent)
-        return "Opened URL after internet confirmation"
+        delay(1_500)
+        UiAgentController().waitForUiSettledAndReadScreen()
+        return "Opened URL; observation required"
     }
 
-    private fun openApp(action: UiAction): String {
+    private suspend fun openApp(action: UiAction): String {
         val packageName = action.target?.viewIdResourceName ?: action.text ?: error("Package name missing.")
         val intent = service.packageManager.getLaunchIntentForPackage(packageName)
             ?: error("No launch intent for package: $packageName")
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         service.startActivity(intent)
-        return "Opened allowed app"
+        delay(1_500)
+        UiAgentController().waitForUiSettledAndReadScreen()
+        return "Opened app; observation required"
     }
 
     private fun clickNode(reader: AccessibilityTreeReader, snapshot: ScreenSnapshot?, action: UiAction): String {

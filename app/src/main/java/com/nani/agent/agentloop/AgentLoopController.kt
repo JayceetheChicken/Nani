@@ -9,6 +9,7 @@ import com.nani.agent.executor.AgentExecutionController
 import com.nani.agent.memory.MemoryStore
 import com.nani.agent.plan.ExecutablePlan
 import com.nani.agent.plan.PlanParser
+import com.nani.agent.plan.PlanOperationType
 import com.nani.agent.plan.PlanValidator
 import com.nani.agent.saf.BroadStorageAccess
 import com.nani.agent.saf.SafRootStore
@@ -48,11 +49,17 @@ class AgentLoopController(
 
         runCatching {
             withTimeout(STEP_TIMEOUT_MS) {
-                val snapshot = UiAgentController().readScreen()
+                val uiAgent = UiAgentController()
+                val snapshot = uiAgent.waitForUiSettledAndReadScreen(timeoutMs = 1_500)
+                    ?: uiAgent.readScreen()
+                val foregroundBefore = snapshot?.foregroundPackage.orEmpty().ifBlank { "unknown" }
                 val settings = AiPrefs.load(context)
                 val provider = AiProviderFactory.create(settings)
                 val plan = provider.generatePlan(buildStepPrompt(goal, snapshot?.summary))
                 val executable = PlanParser.parse(plan).singleStep()
+                val opensOnly = executable.operations.isNotEmpty() &&
+                    executable.operations.all { it.op == PlanOperationType.OpenUrl || it.op == PlanOperationType.OpenApp }
+                val taskDone = (plan.done || executable.done) && !opensOnly
                 val hasFileRoot = SafRootStore.getRootUri(context) != null || BroadStorageAccess.isGranted()
                 val validation = PlanValidator.validate(
                     plan = executable,
@@ -70,11 +77,11 @@ class AgentLoopController(
                     number = previous.stepCount + 1,
                     explanation = plan.explanation,
                     operations = executable.operations,
-                    done = plan.done || executable.done
+                    done = taskDone
                 )
 
                 when {
-                    plan.done || executable.done -> previous.copy(
+                    taskDone -> previous.copy(
                         goal = goal,
                         running = false,
                         paused = false,
@@ -84,7 +91,9 @@ class AgentLoopController(
                         nextPlan = plan,
                         stopReason = AgentStopReason.GoalDone,
                         message = plan.explanation
-                    )
+                    ).also {
+                        logLoopStep(it, foregroundBefore, executable.operations.firstOrNull()?.rawOp ?: "none", plan.explanation, foregroundBefore)
+                    }
                     plan.actionType == AiAction.Blocked || validation.errors.any { it.contains("forbidden", ignoreCase = true) } -> previous.copy(
                         goal = goal,
                         running = false,
@@ -95,7 +104,9 @@ class AgentLoopController(
                         nextPlan = plan,
                         stopReason = AgentStopReason.PolicyBlocked,
                         message = validation.errors.firstOrNull() ?: plan.explanation
-                    )
+                    ).also {
+                        logLoopStep(it, foregroundBefore, executable.operations.firstOrNull()?.rawOp ?: "none", it.message ?: "blocked", foregroundBefore)
+                    }
                     validation.requiresInternetConfirmation && !internetConfirmed -> previous.copy(
                         goal = goal,
                         running = false,
@@ -106,7 +117,9 @@ class AgentLoopController(
                         nextPlan = plan,
                         stopReason = AgentStopReason.NeedsInternetConfirmation,
                         message = "Internet confirmation is required before the next step."
-                    )
+                    ).also {
+                        logLoopStep(it, foregroundBefore, executable.operations.firstOrNull()?.rawOp ?: "none", it.message ?: "confirmation_required", foregroundBefore)
+                    }
                     validation.requiresFinalSubmitConfirmation && !finalSubmitConfirmed -> previous.copy(
                         goal = goal,
                         running = false,
@@ -117,7 +130,9 @@ class AgentLoopController(
                         nextPlan = plan,
                         stopReason = AgentStopReason.NeedsFinalSubmitConfirmation,
                         message = "Final submit confirmation is required."
-                    )
+                    ).also {
+                        logLoopStep(it, foregroundBefore, executable.operations.firstOrNull()?.rawOp ?: "none", it.message ?: "confirmation_required", foregroundBefore)
+                    }
                     !validation.canExecute -> previous.copy(
                         goal = goal,
                         running = false,
@@ -128,14 +143,28 @@ class AgentLoopController(
                         nextPlan = plan,
                         stopReason = AgentStopReason.PolicyBlocked,
                         message = validation.errors.joinToString("; ")
-                    )
+                    ).also {
+                        logLoopStep(it, foregroundBefore, executable.operations.firstOrNull()?.rawOp ?: "none", it.message ?: "validation_error", foregroundBefore)
+                    }
                     else -> {
                         val result = AgentExecutionController(context).execute(
                             plan = executable,
                             internetConfirmed = internetConfirmed,
                             finalSubmitConfirmed = finalSubmitConfirmed
                         )
-                        UiAgentController().readScreen()
+                        val afterSnapshot = uiAgent.waitForUiSettledAndReadScreen()
+                            ?: uiAgent.readScreen()
+                        afterSnapshot?.let {
+                            LogStore.appendScreenSummary(
+                                context = context,
+                                foregroundPackage = it.foregroundPackage,
+                                nodeCount = it.nodes.size,
+                                summary = it.summary
+                            )
+                        }
+                        val foregroundAfter = afterSnapshot?.foregroundPackage.orEmpty().ifBlank { "unknown" }
+                        val actionRawOp = executable.operations.firstOrNull()?.rawOp ?: "none"
+                        val resultText = result.failures.firstOrNull() ?: result.successes.firstOrNull() ?: "no_result"
                         previous.copy(
                             goal = goal,
                             running = true,
@@ -147,8 +176,10 @@ class AgentLoopController(
                             nextPlan = plan,
                             lastResult = result,
                             stopReason = AgentStopReason.None,
-                            message = result.failures.firstOrNull() ?: result.successes.firstOrNull() ?: plan.explanation
-                        )
+                            message = resultText
+                        ).also {
+                            logLoopStep(it, foregroundBefore, actionRawOp, resultText, foregroundAfter)
+                        }
                     }
                 }
             }
@@ -164,7 +195,17 @@ class AgentLoopController(
                     AgentStopReason.Error
                 },
                 message = exception.message ?: exception::class.java.simpleName
-            )
+            ).also {
+                LogStore.appendAgentLoopStep(
+                    context = context,
+                    stepNumber = previous.stepCount + 1,
+                    foregroundBefore = "unknown",
+                    action = previous.currentStep?.operations?.firstOrNull()?.rawOp ?: "unknown",
+                    result = exception.message ?: exception::class.java.simpleName,
+                    foregroundAfter = "unknown",
+                    stopReason = it.stopReason.name
+                )
+            }
         }
     }
 
@@ -180,6 +221,24 @@ class AgentLoopController(
 
     fun discard(): AgentLoopState = AgentLoopState()
 
+    private fun logLoopStep(
+        state: AgentLoopState,
+        foregroundBefore: String,
+        action: String,
+        result: String,
+        foregroundAfter: String
+    ) {
+        LogStore.appendAgentLoopStep(
+            context = context,
+            stepNumber = state.stepCount,
+            foregroundBefore = foregroundBefore,
+            action = action,
+            result = result,
+            foregroundAfter = foregroundAfter,
+            stopReason = state.stopReason.name
+        )
+    }
+
     private fun ExecutablePlan.singleStep(): ExecutablePlan {
         return copy(operations = operations.take(1))
     }
@@ -192,7 +251,8 @@ class AgentLoopController(
             Plan only the next single small step as JSON. Use actionType agent_step unless confirmation, blocked, or done is required.
             If done, return done=true and no operations.
             If internet/browser/web is needed, return ask_confirmation with requiresInternetConfirmation=true unless already on a web page and the next visible step is safe.
-            Allowed operation op values: open_url, read_screen, scroll_forward, scroll_backward, tap_node, set_text, wait, press_back, summarize_folder, classify_files, batch_group_files, create_folder, create_file, edit_text_file, append_text_file, copy_file, rename_file, read_file, summarize_file, list_files, search_files, click_button_by_text, set_field_by_label, set_field_by_hint, set_field_by_node_id.
+            Allowed operation op values: open_app, open_url, read_screen, scroll_forward, scroll_backward, tap_node, set_text, wait, press_back, summarize_folder, classify_files, batch_group_files, create_folder, create_file, edit_text_file, append_text_file, copy_file, rename_file, read_file, summarize_file, list_files, search_files, click_button_by_text, set_field_by_label, set_field_by_hint, set_field_by_node_id.
+            Opening an app or URL is never task completion. After open_app or open_url, continue with read_screen/wait/tap/scroll/set_text steps until the original goal is completed.
             Never generate work_on_webpage or vague unsupported operations.
             Never plan Settings, permission changes, app installs, deletion, passwords, PINs, 2FA, TAN, captcha, purchases, payments, or blind coordinate clicks.
 

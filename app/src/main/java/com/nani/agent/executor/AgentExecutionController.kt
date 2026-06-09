@@ -11,10 +11,11 @@ import com.nani.agent.plan.PlanValidator
 import com.nani.agent.saf.ActionExecutionResult
 import com.nani.agent.saf.BroadStorageAccess
 import com.nani.agent.saf.SafRootStore
+import com.nani.agent.uiagent.UiAgentController
 import com.nani.agent.uiagent.UiAction
 import com.nani.agent.uiagent.UiActionTarget
 import com.nani.agent.uiagent.UiActionType
-import com.nani.agent.uiagent.UiAgentController
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -141,7 +142,7 @@ class AgentExecutionController(
         PlanOperationType.SubmitForm
     )
 
-    private fun openUrls(operations: List<PlanOperation>): ActionExecutionResult {
+    private suspend fun openUrls(operations: List<PlanOperation>): ActionExecutionResult {
         val successes = mutableListOf<String>()
         val failures = mutableListOf<String>()
         operations.forEach { operation ->
@@ -151,8 +152,10 @@ class AgentExecutionController(
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(intent)
+                delay(1_500)
+                UiAgentController().waitForUiSettledAndReadScreen()
                 LogStore.appendUiAction(context, "open_url", "success")
-                "Opened URL after internet confirmation"
+                "Opened URL; observation required"
             }
             if (result.isSuccess) {
                 successes += result.getOrThrow()

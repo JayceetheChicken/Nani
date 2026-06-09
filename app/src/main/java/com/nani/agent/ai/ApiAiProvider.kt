@@ -242,8 +242,9 @@ class ApiAiProvider(
         You only propose plans. You do not execute actions and never claim files were changed.
         For UI/browser/form tasks, plan exactly one small next step, not a long blind sequence. Use actionType "agent_step" for the next step.
         Allowed actionType values: agent_step, read_screen, use_app, use_browser, fill_form, read_files, write_files, edit_files, organize_files, ask_confirmation, ask_clarifying_question, blocked.
-        Allowed operation op values inside proposedJson.operations: open_url, read_screen, scroll_forward, scroll_backward, tap_node, set_text, wait, press_back, summarize_folder, classify_files, batch_group_files, create_folder, create_file, edit_text_file, append_text_file, copy_file, rename_file, read_file, summarize_file, list_files, search_files, click_button_by_text, set_field_by_label, set_field_by_hint, set_field_by_node_id.
+        Allowed operation op values inside proposedJson.operations: open_app, open_url, read_screen, scroll_forward, scroll_backward, tap_node, set_text, wait, press_back, summarize_folder, classify_files, batch_group_files, create_folder, create_file, edit_text_file, append_text_file, copy_file, rename_file, read_file, summarize_file, list_files, search_files, click_button_by_text, set_field_by_label, set_field_by_hint, set_field_by_node_id.
         You may plan only the listed operations. Never generate work_on_webpage or vague webpage/task operations.
+        Opening an app or URL is never task completion. After open_app or open_url, continue with read_screen/wait/tap/scroll/set_text steps until the original goal is completed.
         You may plan: read screen, use allowed apps, use browser after internet confirmation, read webpages, fill forms, scroll, click visible nodes, enter text, read files, analyze files, create files, edit text files, copy files, rename files, batch group files, and create folders.
         Never plan: delete_file, move_file, wipe_folder, clear_folder, format_storage, Android Settings, permission changes, app install/uninstall, root, device admin, overlay, main user profile access, banking/payment/auth/password-manager automation, password entry, 2FA entry, captcha solving, purchase/payment/order confirmation, blind clicks, or coordinate-only clicks.
         Browser, web, online services, URL opening, uploads, sharing, messages, email, posts, and cloud actions require requiresInternetConfirmation=true.
@@ -279,6 +280,7 @@ class ApiAiProvider(
               { "op": "classify_files" },
               { "op": "batch_group_files", "groupSize": 25, "targetFolderPrefix": "W", "fileTypes": ["jpg", "jpeg", "png"], "mode": "copy", "sortBy": "name" },
               { "op": "read_screen" },
+              { "op": "open_app", "text": "com.android.chrome" },
               { "op": "tap_node", "target": { "textOrHint": "OK" } },
               { "op": "set_text", "target": { "textOrHint": "Search" }, "text": "query" },
               { "op": "scroll_forward" },
